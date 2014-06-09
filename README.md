@@ -1,5 +1,5 @@
-Explorations of type systems
-----------------------------
+Machine-checked typesafety proofs
+---------------------------------
 
 This repo contains the relevant files that I produced
 during my semester project on machine checked typesafety proofs in spring 2014.
