@@ -1,0 +1,1342 @@
+
+% There are lambdas (lam) and records (rec), expressions can be nested
+% as usually (enested), small step operational semantics (sstep).
+
+% echo -e "loadFile RecordsLang.elf" | /usr/local/twelf/bin/twelf-server
+
+% arithmetics
+
+nat:      type.                         % natural numbers
+z:        nat.                          % zero
+s:        nat -> nat.                   % successor
+
+eq:       nat -> nat -> type.
+%mode     eq +N1 +N2.
+eq/z:     eq z z.
+eq/s:     eq (s N1) (s N2)
+          <- eq N1 N2.
+
+eq-refl:       {N:nat} eq N N -> type.
+%mode          eq-refl +N -De.
+eq-refl/b:     eq-refl z eq/z.
+eq-refl/s:     eq-refl (s N) (eq/s De) <- eq-refl N De.
+%worlds ()     (eq-refl _ _).
+%total N       (eq-refl N _).
+
+ne:       nat -> nat -> type.
+%mode     ne +N1 +N2.
+ne/z1:    ne z (s N).
+ne/z2:    ne (s N) z.
+ne/s:     ne (s N1) (s N2)
+          <- ne N1 N2.
+
+ne-sym:     ne N1 N2 -> ne N2 N1 -> type.
+%mode       ne-sym +Dne1 -Dne2.
+ne-sym/z1:  ne-sym ne/z1 ne/z2.
+ne-sym/z2:  ne-sym ne/z2 ne/z1.
+ne-sym/s:   ne-sym (ne/s Dne1: ne (s N1) (s N2)) 
+                   (ne/s Dne2: ne (s N2) (s N1))
+            <- ne-sym Dne1 Dne2.
+%worlds ()  (ne-sym _ _).
+%total Dne1 (ne-sym Dne1 _).
+
+
+0: nat = z.
+1: nat = (s 0).
+2: nat = (s 1).
+3: nat = (s 2).
+4: nat = (s 3).
+5: nat = (s 4).
+6: nat = (s 5).
+7: nat = (s 6).
+8: nat = (s 7).
+9: nat = (s 8).
+10: nat = (s 9).
+11: nat = (s 10).
+12: nat = (s 11).
+
+% variables
+
+%abbrev v = nat.                        % variables are identified by nats
+
+% some commonly used variables (in the examples):
+x1: v = 0.
+x2: v = 1.
+y1: v = 2.
+y2: v = 3.
+z1: v = 4.
+z2: v = 5.
+f1: v = 6.
+f2: v = 7.
+
+
+% types
+
+t:        type.
+%name     t T.
+
+vds:      type.                         % list of value declarations
+%name     vds VDs.
+vdcons:   v -> t -> vds -> vds.
+vdnil:    vds.
+
+t/vds:    vds -> t.                     % turn a vds into a record type
+
+t/arrow:  t -> t -> t.                  % type of functions: T1 -> T2
+
+
+% expressions
+
+e:        type.                         % general expression
+%name     e E.
+
+vis:      type.                         % list of variable initialisations
+%name     vis VIs.
+vicons:   v -> e -> vis -> vis.
+vinil:    vis.
+
+u:        type.                         % "user expression"
+%name     u U.
+
+u/var:    v -> u.                       % upcast variable to user expression
+u/vis:    vis -> u.                     % turn a vis into a u
+u/lambda: v -> t -> u -> u.             % make a `(v: t) => expr` lambda
+u/app:    e -> e -> u.                  % function application
+u/sel:    e -> v -> u.                  % selection: e.v
+
+val:      type.                         % fully evaluated value/normal form
+%name     val V.
+
+st:       type.                         % store: (variable => value) mapping
+%name     st S.
+stnil:    st.
+stcons:   v -> val -> st -> st.
+
+rvs:      type.                         % list of fully evaluated values
+%name     rvs RVs.
+rvnil:    rvs.
+rvcons:   v -> val -> rvs -> rvs.
+
+val/clos: st -> v -> t -> u -> val.     % closure = store + (v:T => expr)
+val/rvs:  rvs -> val.
+
+r:        type.                         % runtime expression
+%name     r R.
+r/ctx:    st -> u -> r.
+r/val:    val -> r.
+
+e/u:      u -> e.                       % upcast u to e
+e/r:      r -> e.                       % upcast r to e
+
+% example expression:
+
+% a lambda which takes a z1: { val x1: AnyRec } and "duplicates it" into
+% { val y1 = z1, val y2 = z1 }
+mylambda1: e = (e/u (u/lambda z1 (t/vds (vdcons x1 (t/vds vdnil) vdnil))
+                         (u/vis (vicons y1 (e/u (u/var z1)) (vicons y2 (e/u (u/var z1)) vinil))))).
+
+% environments
+
+g:        type.                         % gamma
+%name     g G.
+
+gcons:    v -> t -> g -> g.             % (v: t) :: g
+gnil:     g.                            % empty gamma
+
+% It's ok to have several vds for the same variable in a g, but only
+% the left-most counts, the others are considered as shadowed.
+
+
+not-in-vis:    v -> vis -> type.
+%mode          not-in-vis +V +VIs.
+%name          not-in-vis Dniv.
+not-in-vis/b:  not-in-vis X vinil.
+not-in-vis/s:  not-in-vis X1 (vicons X2 E2 VIs)
+               <- ne X1 X2
+               <- not-in-vis X1 VIs.
+
+not-in-vds:    v -> vds -> type.
+%mode          not-in-vds +V +VDs.
+%name          not-in-vds Dniv.
+not-in-vds/b:  not-in-vds X vdnil.
+not-in-vds/s:  not-in-vds X1 (vdcons X2 E2 VDs)
+               <- ne X1 X2
+               <- not-in-vds X1 VDs.
+
+vd-lookup:     vds -> v -> t -> type.
+%mode          vd-lookup +VDs +X -T.
+%name          vd-lookup Dvd.
+vd-lookup/b:   vd-lookup (vdcons X T VDs) X T.
+vd-lookup/s:   vd-lookup (vdcons X1 T1 VDs) X2 T2
+               <- vd-lookup VDs X2 T2
+               <- ne X1 X2.
+
+
+% well-formed types
+
+wf:            t -> type.
+%mode          wf +T.
+wf/vds/b:      wf (t/vds vdnil).
+wf/vds/s:      wf (t/vds (vdcons X T VDs))
+               <- not-in-vds X VDs
+               <- wf (t/vds VDs)
+               <- wf T.
+wf/arrow:      wf (t/arrow T1 T2)
+               <- wf T1
+               <- wf T2.
+
+% typing
+
+% typing of any expression:
+ty:            g -> e -> t -> type.
+%mode          ty +G +E -T.
+%name          ty Dty.
+
+% typing of values:
+vty:           val -> t -> type.
+%mode          vty +V -T.
+%name          vty Dvty.
+
+% Store/gamma equivalence judgement: store and gamma have the same
+% variable names in the same order.
+% Can also be seen as a partial function from S to G: if all values in
+% S typecheck, st-eq-g can compute a G corresponding to S.
+st-eq-g:       st -> g -> type.
+%mode          st-eq-g +S -G.
+%name          st-eq-g Deq.
+st-eq-g/b:     st-eq-g stnil gnil.
+st-eq-g/s:     % {X: v}  % <--- proof object must carry variable names
+               st-eq-g S G ->
+               vty V T ->
+               st-eq-g (stcons X V S) (gcons X T G).
+               
+
+% vty implementation: 
+
+vty/clos:      ty (gcons X T1 G) (e/u U) T2
+->             st-eq-g S G
+%              ---------------------------------------
+->             vty (val/clos S X T1 U) (t/arrow T1 T2) .
+
+vty/rvnil: %   ---------------------------------
+               vty (val/rvs rvnil) (t/vds vdnil) .
+
+vty/rvcons:    vty (val/rvs RVs) (t/vds VDs)
+->             vty V T
+%              -------------------------------------------------------
+->             vty (val/rvs (rvcons X V RVs)) (t/vds (vdcons X T VDs)) .
+
+
+% ty implementation:
+
+ty/v/b:  %     ----------------------------------
+               ty (gcons X T G) (e/u (u/var X)) T .
+
+ty/v/s:        ty G (e/u (u/var X1)) T1
+->             ne X1 X2              % shadowing
+%              --------------------------------------
+->             ty (gcons X2 T2 G) (e/u (u/var X1)) T1 .
+
+ty/lam:        ty (gcons X T1 G) (e/u U) T2
+->             wf T1
+%              --------------------------------------------
+->             ty G (e/u (u/lambda X T1 U)) (t/arrow T1 T2) .
+
+ty/vinil:  %   --------------------------------------
+               ty G (e/u (u/vis vinil)) (t/vds vdnil) .
+
+ty/vicons:     ty (gcons X T G) (e/u (u/vis VIs)) (t/vds VDs)
+->             ty G E T
+->             not-in-vis X VIs
+%              -------------------------------------------------------
+->             ty G (e/u (u/vis (vicons X E VIs))) (t/vds (vdcons X T VDs)).
+
+ty/app:        ty G Earg Targ                   % <---- note: no subtyping 
+->             ty G Efunc (t/arrow Targ Tres)
+%              ----------------------------------
+->             ty G (e/u (u/app Efunc Earg)) Tres .
+
+ty/sel:        vd-lookup VDs X T
+->             ty G E (t/vds VDs)
+%              ------------------------
+->             ty G (e/u (u/sel E X)) T .
+
+ty/ctx:        ty G (e/u U) T
+->             st-eq-g S G
+%              -------------------------
+->             ty G0 (e/r (r/ctx S U)) T .
+
+ty/val:        vty V T
+%              ----------------------
+->             ty G (e/r (r/val V)) T .
+
+
+% Note that the only place where the user gives a type is when 
+% defining lambdas, so that's the only place where we need to do
+% a wf check, because types that we calculate ourselves are 
+% automatically wf.
+
+
+% typing examples: 
+
+% given expression and its type, find proof:
+%solve D-foo: 
+  ty gnil 
+     (e/u (u/lambda x1 (t/vds vdnil) (u/var x1)))
+     (t/arrow (t/vds vdnil) (t/vds vdnil)) .
+
+% given expression, find its type + proof:
+%solve D-foo: 
+ty gnil 
+   (e/u (u/vis (vicons
+     f1 (e/u (u/lambda z1 (t/vds vdnil) (u/vis ((vicons x1 (e/u (u/var z1))
+                                                (vicons x2 (e/u (u/var z1))
+                                                 vinil))))))
+        vinil)))
+   T-foo .
+
+
+% Partial function which only succeeds if all expressions in vis
+% are in normal form (i.e. values).
+vis>rvs:       vis -> rvs -> type.
+%mode          vis>rvs +VIs -RVs.
+vis>rvs/b:     vis>rvs vinil rvnil.
+vis>rvs/s:     vis>rvs (vicons X (e/r (r/val V)) VIs) (rvcons X V RVs)
+               <- vis>rvs VIs RVs.
+
+
+rv-lookup:     rvs -> v -> val -> type.
+%mode          rv-lookup +RVs +X -V.
+rv-lookup/b:   rv-lookup (rvcons X V RVs) X V.
+rv-lookup/s:   rv-lookup (rvcons X1 V1 RVs) X2 V2
+               <- rv-lookup RVs X2 V2
+               <- ne X1 X2.
+
+
+% reduction
+
+get-subexpr:          u -> e -> type.
+%mode                 get-subexpr +U -E.
+get-subexpr/vis/u:    get-subexpr (u/vis (vicons X (e/u U) VIs))
+                                                   (e/u U).
+get-subexpr/vis/c:    get-subexpr (u/vis (vicons X (e/r (r/ctx S U)) VIs))
+                                                   (e/r (r/ctx S U)).
+get-subexpr/app/f/u:  get-subexpr (u/app (e/u F) A)
+                                         (e/u F).
+get-subexpr/app/f/c:  get-subexpr (u/app (e/r (r/ctx S F)) A)
+                                         (e/r (r/ctx S F)).
+get-subexpr/app/a/u:  get-subexpr (u/app (e/r (r/val VF)) (e/u A))
+                                                          (e/u A).
+get-subexpr/app/a/c:  get-subexpr (u/app (e/r (r/val VF)) (e/r (r/ctx S A)))
+                                                          (e/r (r/ctx S A)).
+get-subexpr/sel/u:    get-subexpr (u/sel (e/u U) X)
+                                         (e/u U).
+get-subexpr/sel/c:    get-subexpr (u/sel (e/r (r/ctx S U)) X)
+                                         (e/r (r/ctx S U)).
+
+
+subst-subexpr:          e -> u -> u -> type.
+%mode                   subst-subexpr +E1 +U -E2.
+subst-subexpr/vis/u:    subst-subexpr E2
+                           (u/vis (vicons X (e/u U) VIs))
+                           (u/vis (vicons X    E2   VIs)).                        
+subst-subexpr/vis/c:    subst-subexpr E2
+                           (u/vis (vicons X (e/r (r/ctx S U)) VIs))
+                           (u/vis (vicons X       E2          VIs)).
+subst-subexpr/app/f/u:  subst-subexpr E2
+                           (u/app (e/u F) A)
+                           (u/app    E2   A).
+subst-subexpr/app/f/c:  subst-subexpr E2
+                           (u/app (e/r (r/ctx S F)) A)
+                           (u/app        E2         A).
+subst-subexpr/app/a/u:  subst-subexpr E2
+                           (u/app (e/r (r/val VF)) (e/u A))
+                           (u/app (e/r (r/val VF))    E2  ).
+subst-subexpr/app/a/c:  subst-subexpr E2
+                           (u/app (e/r (r/val VF)) (e/r (r/ctx S A)))
+                           (u/app (e/r (r/val VF))        E2        ).
+subst-subexpr/sel/u:    subst-subexpr E2
+                           (u/sel (e/u U) X)
+                           (u/sel    E2   X).
+subst-subexpr/sel/c:    subst-subexpr E2
+                           (u/sel (e/r (r/ctx S U)) X)
+                           (u/sel        E2         X).
+
+
+
+step:          st -> u           % in: context
+               -> r              % out: context or value
+               -> type.
+%mode          step +S +U -R.
+%name          step Dstep.
+
+% Note that step calls itself recursively. This is not to make several 
+% steps, but to find where it has to do the step.
+
+step/var/b:         step (stcons X V S) (u/var X) (r/val V).
+step/var/s:         step (stcons X2 V2 S) (u/var X1) 
+                         (r/ctx        S  (u/var X1))
+                    <- ne X1 X2.
+step/lambda:        step S (u/lambda X T U) (r/val (val/clos S X T U)).
+step/vis/tail:      step   S (u/vis (vicons X (e/r (r/val V)) VIs1))
+                    (r/ctx S (u/vis (vicons X (e/r (r/val V)) VIs2)))
+                    <- step        (stcons X V S) (u/vis VIs1)
+                            (r/ctx (stcons X V S) (u/vis VIs2)).
+step/vis/done:      step _ (u/vis VIs) (r/val (val/rvs RVs))
+                    <- vis>rvs VIs RVs.
+step/app:           step _ (u/app (e/r (r/val (val/clos S X T U)))
+                                  (e/r (r/val V)))
+                    (r/ctx (stcons X V S) U). 
+step/sel:           step S (u/sel (e/r (r/val (val/rvs RVs))) X) (r/val V)
+                    <- rv-lookup RVs X V.
+step/subexpr/wrap:  step S U1 (r/ctx S U2)
+                    <- get-subexpr U1 (e/u U0)
+                    <- subst-subexpr (e/r (r/ctx S U0)) U1 U2.
+step/subexpr/step:  step S U1 (r/ctx S U2)
+                    <- get-subexpr U1 (e/r (r/ctx S01 U01))
+                    <- step S01 U01 R
+                    <- subst-subexpr (e/r R) U1 U2.
+
+eval0:         st -> u -> val -> type.
+%mode          eval0 +S +U -V.
+eval0/b:       eval0 S U V
+               <- step S U (r/val V).
+eval0/s:       eval0 S1 U1 V
+               <- step S1 U1 (r/ctx S2 U2)
+               <- eval0 S2 U2 V.
+
+eval:          u -> val -> type.
+%mode          eval +U -V.
+eval/-:        eval U V <- eval0 stnil U V.
+
+
+rs:            type.
+rnil:          rs.
+rcons:         r -> rs -> rs.
+
+trace:         st -> u -> rs -> type.
+%mode          trace +S +U -RS.
+trace/b:       trace S U (rcons (r/val V) rnil)
+               <- step S U (r/val V).
+trace/s:       trace S1 U1 (rcons (r/ctx S2 U2) RS)
+               <- step S1 U1 (r/ctx S2 U2)
+               <- trace S2 U2 RS.
+
+ntrace:        nat -> st -> u -> rs -> type.
+%mode          ntrace +N +S +U -RS.
+ntrace/b:      ntrace z S U rnil.
+ntrace/s:      ntrace (s N) S1 U1 (rcons (r/ctx S2 U2) RS)
+               <- step S1 U1 (r/ctx S2 U2)
+               <- ntrace N S2 U2 RS.
+
+
+
+% examples
+
+myexpr2: u = (u/vis (vicons y1 (e/u (u/vis vinil)) vinil)).
+%solve D-foo: ty gnil (e/u myexpr2) T-foo.
+%solve D-foo: eval myexpr2 V-result.
+
+myexpr3: u = (u/vis (vicons y1 (e/u (u/vis vinil))
+                    (vicons y2 (e/u (u/vis vinil)) vinil))).
+%solve D-foo: ty gnil (e/u myexpr3) T-foo.
+%solve D-foo: eval myexpr3 V-result.
+
+myexpr4: u = (u/sel (e/u myexpr3) y2).
+%solve D-foo: ty gnil (e/u myexpr4) T-foo.
+%solve D-foo: eval myexpr4 V-result.
+
+myexpr5: u = (u/app (e/u (u/lambda x1 (t/vds vdnil) (u/var x1))) 
+                         (e/u (u/vis vinil))).
+%solve D-foo: ty gnil (e/u myexpr5) T-foo.
+%solve D-foo: eval myexpr5 V-result.
+
+%solve D-foo: eval (u/app 
+   mylambda1 
+   (e/u (u/vis (vicons x1 (e/u (u/vis vinil)) vinil)))
+) V-result.
+
+%solve D-foo44: eval (u/sel (e/u (u/sel (e/r (r/val
+     (val/rvs
+          (rvcons y1 (val/rvs (rvcons x1 (val/rvs rvnil) rvnil))
+              (rvcons y2 (val/rvs (rvcons x1 (val/rvs rvnil) rvnil)) rvnil)))
+)) y1)) x1) V-result.
+
+% myexpr6 = mylambda1({ val x1 = {} }).y2
+myexpr6: u = (u/sel (e/u (u/app 
+   mylambda1
+   (e/u (u/vis (vicons x1 (e/u (u/vis vinil)) vinil)))
+)) y2).
+%solve D-foo: ty gnil (e/u myexpr6) T-foo.
+
+%{
+%solve D-001: ntrace 7 stnil myexpr6 Trace-001.
+%solve D-001: ntrace 8 stnil myexpr6 Trace-001.
+%solve D-001: ntrace 9 stnil myexpr6 Trace-001.
+%solve D-001: ntrace 10 stnil myexpr6 Trace-001.
+%solve D-001: ntrace 11 stnil myexpr6 Trace-001.
+%solve D-001: ntrace 12 stnil myexpr6 Trace-001.
+}%
+
+%solve D-foo: eval myexpr6 V-result.
+
+% myexpr7 = mylambda1({ val x1 = {} }).y2.x1
+myexpr7: u = (u/sel (e/u (u/sel (e/u (u/app 
+   mylambda1
+   (e/u (u/vis (vicons x1 (e/u (u/vis vinil)) vinil)))
+)) y2)) x1).
+%solve D-foo: ty gnil (e/u myexpr7) T-foo.
+%solve D-foo: eval myexpr7 V-result.
+
+
+% -------- lemmas for progress --------
+
+sellemma:      vd-lookup VDs X T -> vty (val/rvs RVs) (t/vds VDs)
+               -> rv-lookup RVs X V -> vty V T -> type.
+%mode          sellemma +Dvd +Dvty1 -Drv -Dvty2.
+
+sellemma/b: 
+sellemma (vd-lookup/b: vd-lookup (vdcons X T VDs) X T)
+         (vty/rvcons (Dvty0: vty (val/rvs RVs) (t/vds VDs)) (Dvty1: vty V T)
+            : vty (val/rvs (rvcons X V RVs)) (t/vds (vdcons X T VDs)))
+         (rv-lookup/b: rv-lookup (rvcons X V RVs) X V)
+         Dvty1.
+
+sellemma/s:
+   sellemma (vd-lookup/s (Dne: ne X2 X1) (Dvd: vd-lookup VDs X1 T1)
+               : vd-lookup (vdcons X2 T2 VDs) X1 T1)
+            (vty/rvcons (Dvty0: vty (val/rvs RVs) (t/vds VDs))
+                        (Dvty1: vty V2 T2)
+               : vty (val/rvs (rvcons X2 V2 RVs)) 
+                     (t/vds (vdcons X2 T2 VDs)))
+            (rv-lookup/s Dne Drv)
+            Dvty2
+<- sellemma Dvd
+            Dvty0
+            (Drv: rv-lookup RVs X1 V1)
+            (Dvty2: vty V1 T1).
+
+%worlds () (sellemma _ _ _ _).
+%total Dl (sellemma Dl _ _ _).
+
+
+vicons-tail-lemma:  % in:
+                    st-eq-g S G 
+                    -> ty G (e/u (u/vis (vicons X (e/r (r/val V)) VIs))) 
+                            (t/vds VDs)
+                    -> step (stcons X V S) (u/vis VIs) R1
+                    % out:
+                    -> step S (u/vis (vicons X (e/r (r/val V)) VIs)) R2
+                    -> type.
+%mode               vicons-tail-lemma +Deq +Dty +Dstep1 -Dstep2.
+
+vicons-tail-lemma/ctx:
+   vicons-tail-lemma Deq Dty
+      (Dstep: step   (stcons X V S) (u/vis VIs1) 
+              (r/ctx (stcons X V S) (u/vis VIs2)))
+      (step/vis/tail Dstep
+        : step   S (u/vis (vicons X (e/r (r/val V)) VIs1))
+          (r/ctx S (u/vis (vicons X (e/r (r/val V)) VIs2)))).
+
+vicons-tail-lemma/val:
+   vicons-tail-lemma Deq Dty
+      (step/vis/done (Dvr: vis>rvs VIs RVs)
+         : step (stcons X V S) (u/vis VIs) (r/val (val/rvs RVs)))
+      (step/vis/done (vis>rvs/s Dvr)
+         : step S  (u/vis (vicons X (e/r (r/val V)) VIs))
+          (r/val (val/rvs (rvcons X V RVs)))).
+
+%worlds () (vicons-tail-lemma _ _ _ _).
+%total Dstep (vicons-tail-lemma _ _ Dstep _).
+
+
+% -------- progress --------
+
+progress:      st-eq-g S G -> ty G (e/u U) T    % (context S U) && U types
+               -> step S U R -> type.           % -> there's a step
+%mode          progress +Deq +Dty -Dstep.
+
+progress/var/b:
+   progress 
+    % Twelf unsmart
+    % (Deq: st-eq-g (stcons X V S) (gcons X T G))
+      (st-eq-g/s Deq Dvty: st-eq-g (stcons X V S) (gcons X T G))
+      (ty/v/b: ty (gcons X T G) (e/u (u/var X)) T)
+      (step/var/b: step (stcons X V S) (u/var X) (r/val V)).
+
+progress/var/s:
+   progress 
+    % Twelf unsmart
+    % (Deq: st-eq-g (stcons X2 V2 S) (gcons X2 T2 G))
+      (st-eq-g/s Deq Dvty: st-eq-g (stcons X2 V2 S) (gcons X2 T2 G))
+      (ty/v/s (Dty: ty G (e/u (u/var X1)) T1)
+              (Dne: ne X1 X2)
+         : ty (gcons X2 T2 G) (e/u (u/var X1)) T1)
+      (step/var/s Dne: step (stcons X2 V2 S) (u/var X1) 
+                            (r/ctx        S  (u/var X1))).
+
+progress/lambda:
+   progress
+      (Deq: st-eq-g S G)
+      (ty/lam (Dty: ty (gcons X T1 G) (e/u U) T2)
+              (Dwf: wf T1)
+         : ty G (e/u (u/lambda X T1 U)) (t/arrow T1 T2))
+      (step/lambda: step S (u/lambda X T1 U) (r/val (val/clos S X T1 U))).
+
+progress/vinil:
+   progress
+      (Deq: st-eq-g S G)
+      (ty/vinil: ty G (e/u (u/vis vinil)) (t/vds vdnil))
+      (step/vis/done vis>rvs/b
+         : step S (u/vis vinil) (r/val (val/rvs rvnil))).
+
+progress/vicons/head/wrap:
+   progress
+      (Deq: st-eq-g S G)
+      (ty/vicons (Dty1: ty (gcons X T G) (e/u (u/vis VIs)) (t/vds VDs))
+                 (Dty2: ty G (e/u U) T)
+                 (Dniv: not-in-vis X VIs)
+      : ty G (e/u (u/vis (vicons X (e/u U) VIs))) (t/vds (vdcons X T VDs)))
+      (step/subexpr/wrap subst-subexpr/vis/u get-subexpr/vis/u 
+        : step   S (u/vis (vicons X (e/u U) VIs))
+          (r/ctx S (u/vis (vicons X (e/r (r/ctx S U)) VIs)))).
+
+progress/vicons/head/step:
+   progress
+      (Deq: st-eq-g S G)
+      (ty/vicons (Dty1: ty (gcons X T G) (e/u (u/vis VIs)) (t/vds VDs))
+                 (ty/ctx (Dty:  ty G1 (e/u U1) T)
+                         (Deq1: st-eq-g S1 G1)
+                     : ty G (e/r (r/ctx S1 U1)) T)
+                 (Dniv: not-in-vis X VIs)
+         : ty G (e/u (u/vis (vicons X (e/r (r/ctx S1 U1)) VIs)))
+                (t/vds (vdcons X T VDs)))
+      (step/subexpr/step subst-subexpr/vis/c Dstep get-subexpr/vis/c
+        : step   S (u/vis (vicons X (e/r (r/ctx S1 U1)) VIs))
+          (r/ctx S (u/vis (vicons X (e/r       R      ) VIs))))
+<- progress Deq1 Dty (Dstep: step S1 U1 R).
+
+progress/vicons/tail:
+   progress
+      (Deq: st-eq-g S G)
+      (ty/vicons  (Dty1: ty (gcons X T G) (e/u (u/vis VIs1)) (t/vds VDs))
+                  (ty/val Dvty: ty G (e/r (r/val V)) T)
+                  (Dniv: not-in-vis X VIs1)
+            : ty G (e/u (u/vis (vicons X (e/r (r/val V)) VIs1)))
+                   (t/vds (vdcons X T VDs)))
+      Dstep2
+<- progress (st-eq-g/s Deq Dvty)
+            Dty1
+            (Dstep1: step (stcons X V S) (u/vis VIs1) R1)
+<- vicons-tail-lemma 
+      Deq 
+      (ty/vicons Dty1 (ty/val Dvty) (Dniv)
+         : ty G (e/u (u/vis (vicons X (e/r (r/val V)) VIs1)))
+                (t/vds (vdcons X T VDs)))
+      Dstep1 
+      (Dstep2: step S (u/vis (vicons X (e/r (r/val V)) VIs1)) R2).
+
+progress/app/func/wrap:
+   progress
+      (Deq: st-eq-g S G)
+      (ty/app (Dty1: ty G A TA)
+              (Dty2: ty G (e/u F) (t/arrow TA TR))
+         : ty G (e/u (u/app (e/u F) A)) TR)
+      (step/subexpr/wrap subst-subexpr/app/f/u get-subexpr/app/f/u
+         : step   S (u/app (e/u F) A)
+           (r/ctx S (u/app (e/r (r/ctx S F)) A))).
+
+progress/app/func/step:
+   progress
+      (Deq: st-eq-g S G)
+      (ty/app (Dty1: ty G A TA)
+              (ty/ctx (Dty:  ty G1 (e/u F1) (t/arrow TA TR))
+                      (Deq1: st-eq-g S1 G1)
+                  : ty G (e/r (r/ctx S1 F1)) (t/arrow TA TR))
+         : ty G (e/u (u/app (e/r (r/ctx S1 F1)) A)) TR)
+      (step/subexpr/step subst-subexpr/app/f/c Dstep get-subexpr/app/f/c
+         : step   S (u/app (e/r (r/ctx S1 F1)) A)
+           (r/ctx S (u/app (e/r        R     ) A)))
+<- progress Deq1 Dty (Dstep: step S1 F1 R).
+
+progress/app/arg/wrap:
+   progress
+      (Deq: st-eq-g S G)
+      (ty/app (Dty1: ty G (e/u A) TA)
+              (Dty2: ty G (e/r (r/val VF)) (t/arrow TA TR))
+         : ty G (e/u (u/app (e/r (r/val VF)) (e/u A))) TR)
+      (step/subexpr/wrap subst-subexpr/app/a/u get-subexpr/app/a/u
+         : step   S (u/app (e/r (r/val VF)) (e/u A))
+           (r/ctx S (u/app (e/r (r/val VF)) (e/r (r/ctx S A))))).
+
+progress/app/arg/step:
+   progress
+      (Deq: st-eq-g S G)
+      (ty/app (ty/ctx (Dty:  ty G1 (e/u A1) TA)
+                      (Deq1: st-eq-g S1 G1)
+                  : ty G (e/r (r/ctx S1 A1)) TA)
+              (Dty1: ty G (e/r (r/val VF)) (t/arrow TA TR))
+         : ty G (e/u (u/app (e/r (r/val VF)) (e/r (r/ctx S1 A1)))) TR)
+      (step/subexpr/step subst-subexpr/app/a/c Dstep get-subexpr/app/a/c
+         : step   S (u/app (e/r (r/val VF)) (e/r (r/ctx S1 A1)))
+           (r/ctx S (u/app (e/r (r/val VF)) (e/r        R     ))))
+<- progress Deq1 Dty (Dstep: step S1 A1 R).
+
+progress/app/app:
+   progress
+      (Deq: st-eq-g S G)
+      (ty/app 
+            (Dty1: ty G (e/r (r/val V)) TA)
+          % Twelf being unsmart:  
+          % (Dty2: ty G (e/r (r/val (val/clos Sc X TA U))) (t/arrow TA TR))
+            (ty/val (vty/clos Dty0 Deq0)
+               : ty G (e/r (r/val (val/clos Sc X TA U))) (t/arrow TA TR))
+         : ty G (e/u (u/app (e/r (r/val (val/clos Sc X TA U)))
+                            (e/r (r/val V)))) TR)
+      (step/app: step S (u/app (e/r (r/val (val/clos Sc X TA U)))
+                               (e/r (r/val V)))
+                      (r/ctx (stcons X V Sc) U)).
+
+progress/sel/wrap:
+   progress
+      (Deq: st-eq-g S G)
+      (ty/sel (Dvd: vd-lookup VDs X T)
+              (Dty: ty G (e/u U) (t/vds VDs))
+         : ty G (e/u (u/sel (e/u U) X)) T)
+      (step/subexpr/wrap subst-subexpr/sel/u get-subexpr/sel/u
+         : step   S (u/sel (e/u U) X)
+           (r/ctx S (u/sel (e/r (r/ctx S U)) X))).
+
+progress/sel/step:
+   progress
+      (Deq: st-eq-g S G)
+      (ty/sel (Dvd: vd-lookup VDs X T)
+              (ty/ctx (Dty:  ty G1 (e/u U1) (t/vds VDs))
+                      (Deq1: st-eq-g S1 G1)
+                  : ty G (e/r (r/ctx S1 U1)) (t/vds VDs))
+         : ty G (e/u (u/sel (e/r (r/ctx S1 U1)) X)) T)
+      (step/subexpr/step subst-subexpr/sel/c Dstep get-subexpr/sel/c
+         : step   S (u/sel (e/r (r/ctx S1 U1)) X)
+           (r/ctx S (u/sel (e/r       R      ) X)))
+<- progress Deq1 Dty (Dstep: step S1 U1 R).
+
+progress/sel/sel:
+   progress
+      (Deq: st-eq-g S G)
+      (ty/sel (Dvd: vd-lookup VDs X T)
+              (ty/val Dvty
+                  : ty G (e/r (r/val (val/rvs RVs))) (t/vds VDs))
+         : ty G (e/u (u/sel (e/r (r/val (val/rvs RVs))) X)) T)
+      (step/sel (Drvl: rv-lookup RVs X V)
+         : step S (u/sel (e/r (r/val (val/rvs RVs))) X) (r/val V))
+<- sellemma Dvd Dvty Drvl Dvty0.
+
+%worlds () (progress _ _ _).
+%total Dty (progress _ Dty _).
+
+
+% -------- lemmas for preservation --------
+
+vis>rvs-preservation:   % in:
+                        ty G (e/u (u/vis VIs)) (t/vds VDs) -> 
+                        vis>rvs VIs RVs ->
+                        % out:
+                        vty (val/rvs RVs) (t/vds VDs) -> 
+                        type.
+%mode                   vis>rvs-preservation +Dty1 +Dvr -Dty2.
+
+-/b: vis>rvs-preservation
+         Dty
+         vis>rvs/b 
+         (vty/rvnil: vty (val/rvs rvnil) (t/vds vdnil)).
+
+-/s: vis>rvs-preservation
+         (ty/vicons (Dty1: ty (gcons X T G) (e/u (u/vis VIs)) (t/vds VDs))
+                    (ty/val Dvty1: ty G (e/r (r/val V)) T)
+                    (Dni:  not-in-vis X VIs)
+            : ty G (e/u (u/vis (vicons X (e/r (r/val V)) VIs)))
+                   (t/vds (vdcons X T VDs)))
+         (vis>rvs/s (Dvr: vis>rvs VIs RVs)
+            : vis>rvs (vicons X (e/r (r/val V)) VIs) (rvcons X V RVs))
+         (vty/rvcons Dvty2 Dvty1)
+<- vis>rvs-preservation Dty1 Dvr (Dvty2: vty (val/rvs RVs) (t/vds VDs)).
+
+%worlds () (vis>rvs-preservation _ _ _).
+%total Dvr (vis>rvs-preservation _ Dvr _).
+
+
+not-in-vis-lemma:   % in:
+                    not-in-vis X VIs1 ->
+                    ty G1 (e/u (u/vis VIs1)) (t/vds VDs) ->
+                    ty G2 (e/u (u/vis VIs2)) (t/vds VDs) ->
+                    % out
+                    not-in-vis X VIs2 -> type.
+%mode               not-in-vis-lemma +Dniv1 +Dty1 +Dty2 -Dniv2.
+
+not-in-vis-lemma/b:
+   not-in-vis-lemma not-in-vis/b ty/vinil ty/vinil not-in-vis/b.
+
+not-in-vis-lemma/s:
+   not-in-vis-lemma
+      (not-in-vis/s Dniv0 Dne0
+         : not-in-vis X (vicons Y E1 VIs1))
+      (ty/vicons Dty1a Dty1b Dniv1
+         : ty G1 (e/u (u/vis (vicons Y E1 VIs1))) 
+                            (t/vds (vdcons Y T VDs)))
+      (ty/vicons Dty2a Dty2b Dniv2
+         : ty G2 (e/u (u/vis (vicons Y E2 VIs2))) 
+                            (t/vds (vdcons Y T VDs)))
+      (not-in-vis/s Dniv3 Dne0
+         : not-in-vis X (vicons Y E2 VIs2))
+<- not-in-vis-lemma Dniv0 Dty1a Dty2a (Dniv3: not-in-vis X VIs2).
+
+%worlds () (not-in-vis-lemma _ _ _ _).
+%total Dniv1 (not-in-vis-lemma Dniv1 _ _ _).
+
+
+st-eq-g>var-eq:   st-eq-g (stcons X1 V S) (gcons X2 T G)
+                  -> eq X1 X2 -> type.
+%mode             st-eq-g>var-eq +Deq -De.
+-: st-eq-g>var-eq (st-eq-g/s Deq Dvty
+                      : st-eq-g (stcons X1 V S) (gcons X1 T G))
+                  De
+                  <- eq-refl X1 De.
+%worlds () (st-eq-g>var-eq _ _).
+%total Deq (st-eq-g>var-eq Deq _).
+
+
+% the uninhabited type:
+
+false:   type.
+%freeze false.
+
+ne-same:       ne X X -> false -> type.
+%mode          ne-same +Dne -Dfalse.
+-: ne-same (ne/s Dne: ne (s N) (s N)) Dfalse <- ne-same Dne Dfalse.
+%worlds ()     (ne-same _ _).
+%total Dne     (ne-same Dne _).
+
+eq-and-ne:     eq X1 X2 -> ne X1 X2 -> false -> type.
+%mode          eq-and-ne +Deq +Dne -Dfalse.
+eq-and-ne/s:   eq-and-ne (eq/s Deq: eq (s X1) (s X2))
+                         (ne/s Dne: ne (s X1) (s X2))
+                         Dfalse
+               <- eq-and-ne Deq Dne Dfalse.
+%worlds () (eq-and-ne _ _ _).
+%total Deq (eq-and-ne Deq _ _).
+
+is-bad-st-eq-g:   st-eq-g (stcons X1 V S) (gcons X2 T G) -> ne X1 X2
+                  -> false -> type.
+%mode             is-bad-st-eq-g +Deq +Dne -Dfalse.
+-: is-bad-st-eq-g (Deq: st-eq-g (stcons X1 V S) (gcons X2 T G))
+                  (Dne: ne X1 X2)
+                  Dfalse
+<- st-eq-g>var-eq Deq De
+<- eq-and-ne De Dne Dfalse.
+%worlds () (is-bad-st-eq-g _ _ _).
+%total Deq (is-bad-st-eq-g Deq _ _).
+
+false>ty:  false -> {G: g} {E: e} {T: t} ty G E T -> type.
+%mode      false>ty +Dfalse +G +E +T -Dty.
+%worlds () (false>ty _ _ _ _ _).
+%total Dfa (false>ty Dfa _ _ _ _).
+
+t-id:          t -> t -> type.
+t-id/refl:     t-id T T.
+
+false>t-id:    false -> {T1: t} {T2: t} t-id T1 T2 -> type.
+%mode          false>t-id +Dfalse +T1 +T2 -Did.
+%worlds () (false>t-id _ _ _ _).
+%total Dfa (false>t-id Dfa _ _ _).
+
+
+vd-lookup-t-id:    vd-lookup (vdcons X1 T1 VDs1) X1 T2
+                   -> t-id T1 T2 -> type.
+%mode              vd-lookup-t-id +Dvd -Did.
+vd-lookup-t-id/impl: 
+   vd-lookup-t-id (vd-lookup/b: vd-lookup (vdcons X1 T1 VDs1) X1 T1)
+                  t-id/refl.
+vd-lookup-t-id/contradiction:
+   vd-lookup-t-id (vd-lookup/s (Dne: ne X1 X1) Dvd)
+                  Did
+<- ne-same Dne Dfalse
+<- false>t-id Dfalse T1 T2 Did.
+%worlds () (vd-lookup-t-id _ _).
+%total Dvd (vd-lookup-t-id Dvd _).
+
+
+t-id-vty:         t-id T1 T2 -> vty V T1 -> vty V T2 -> type.
+%mode             t-id-vty +Did +Dvty1 -Dvty2.
+-: t-id-vty (Did: t-id T T) (Dvty: vty V T) Dvty.
+%worlds () (t-id-vty _ _ _).
+%total Did (t-id-vty Did _ _).
+
+
+sel-preservation:  vd-lookup VDs X T 
+                   -> vty (val/rvs RVs) (t/vds VDs)
+                   -> rv-lookup RVs X V
+                   -> vty V T -> type.
+%mode              sel-preservation +Dvd +Dvty1 +Drvl -Dvty2.
+
+sel-preservation/contradiction-1:
+   sel-preservation 
+      vd-lookup/b
+      (vty/rvcons Dvty1 Dvty2)
+      (rv-lookup/s (Dne: ne X1 X1) Drvl1)
+      Dvty3
+<- ne-same Dne Dfalse
+<- false>ty Dfalse gnil _ _ (ty/val Dvty3).      
+
+% Special case: {Dvd1: vd-lookup (vdcons X1 T1 VDs1) X1 T2}
+% Need to show that this implies T1 == T2, and that
+% vty V T1 && T1 == T2 implies vty V T2
+sel-preservation/specialcase:
+   sel-preservation 
+      (Dvd1: vd-lookup (vdcons X T1 VDs) X T2)
+      (vty/rvcons (Dvty0: vty (val/rvs RVs) (t/vds VDs))
+                  (Dvty1: vty V T1)
+            : vty (val/rvs (rvcons X V RVs)) (t/vds (vdcons X T1 VDs)))
+      Drvl
+      Dvty2
+<- vd-lookup-t-id Dvd1 (Did: t-id T1 T2)
+<- t-id-vty Did Dvty1 Dvty2.
+
+sel-preservation/b: 
+   sel-preservation 
+      (Dvd: vd-lookup (vdcons X T VDs) X T)
+      (vty/rvcons (Dvty0: vty (val/rvs RVs) (t/vds VDs))
+                  (Dvty1: vty V T)
+            : vty (val/rvs (rvcons X V RVs)) (t/vds (vdcons X T VDs)))
+      Drvl
+      Dvty1.
+
+sel-preservation/s:
+   sel-preservation
+      (vd-lookup/s (Dne: ne X2 X1)
+                   (Dvd: vd-lookup VDs X1 T1)
+            : vd-lookup (vdcons X2 T2 VDs) X1 T1)
+      (vty/rvcons (Dvty0: vty (val/rvs RVs) (t/vds VDs))
+                  (Dvty1: vty V2 T2)
+            : vty (val/rvs (rvcons X2 V2 RVs))
+                  (t/vds (vdcons X2 T2 VDs)))
+      (rv-lookup/s Dne0 (Drvl: rv-lookup RVs X1 V1))
+      Dvty2
+<- sel-preservation Dvd Dvty0 Drvl Dvty2.
+
+%worlds () (sel-preservation _ _ _ _).
+%total D (sel-preservation D _ _ _).
+
+
+% -------- lemmas for gammas and weakening --------
+
+g-length:         g -> nat -> type.
+%mode             g-length +G -N.
+g-length/b:       g-length gnil z.
+g-length/s:       g-length (gcons X T G) (s N) <- g-length G N.
+%worlds () (g-length _ _).
+%total G (g-length G _).
+
+g-length-proof:   {G: g} g-length G N -> type.
+%mode             g-length-proof +G -Dlen.
+g-length-proof/b: g-length-proof gnil g-length/b.
+g-length-proof/s: g-length-proof (gcons X T G) (g-length/s Dlen)
+                  <- g-length-proof G Dlen.
+%worlds () (g-length-proof _ _).
+%total G (g-length-proof G _).
+
+g-append:         g -> {X: v} {T: t} g -> type.
+%mode             g-append +G1 +X +T -G2.
+%name             g-append Dga.
+g-append/b:       g-append gnil X T 
+                           (gcons X T gnil).
+g-append/s:       g-append (gcons X1 T1 Ga) X2 T2
+                           (gcons X1 T1 Gb)
+                  <- g-append Ga X2 T2 Gb.
+
+g-append-length:  g-append G1 X T G2 
+                  -> g-length G1 N -> g-length G2 (s N) -> type.
+%mode             g-append-length +Dga -Dlen1 +Dlen2.
+g-append-length/b:
+   g-append-length g-append/b g-length/b (g-length/s g-length/b).
+g-append-length/s:
+   g-append-length (g-append/s Dga) (g-length/s Dlen1) (g-length/s Dlen2)
+<- g-append-length Dga Dlen1 Dlen2.
+%worlds () (g-append-length _ _ _).
+%total Dga (g-append-length Dga _ _).
+
+split-last-of-gcons:    {X1: v} {T1: t} {G1: g} 
+                        g-append G2 X2 T2 (gcons X1 T1 G1) -> type.
+%mode                   split-last-of-gcons +X1 +T1 +G1 -Dga.
+split-last-of-gcons/b:
+   split-last-of-gcons X1 T1 gnil g-append/b.
+split-last-of-gcons/s:
+   split-last-of-gcons X1 T1 (gcons X0 T0 G0) (g-append/s Dga)
+<- split-last-of-gcons X0 T0 G0 (Dga: g-append G2 X2 T2 (gcons X0 T0 G0)).
+%worlds () (split-last-of-gcons _ _ _ _).
+%total G (split-last-of-gcons _ _ G _).
+
+
+weaken-ty-1:      ty G1 E T -> g-append G1 X0 T0 G2
+                  -> ty G2 E T -> type.
+%mode             weaken-ty-1 +Dty1 +Dga -Dty.
+
+weaken-ty-1/v/b:
+   weaken-ty-1 
+      (ty/v/b: ty (gcons X T Ga) (e/u (u/var X)) T)
+      (g-append/s Dga: g-append (gcons X T Ga) X0 T0 (gcons X T Gb))
+      (ty/v/b: ty (gcons X T Gb) (e/u (u/var X)) T).
+
+weaken-ty-1/v/s:
+   weaken-ty-1
+      (ty/v/s (Dty1: ty Ga (e/u (u/var X1)) T1)
+              (Dne: ne X1 X2)
+         : ty (gcons X2 T2 Ga) (e/u (u/var X1)) T1)
+      (g-append/s Dga: g-append (gcons X2 T2 Ga) X0 T0 (gcons X2 T2 Gb))
+      (ty/v/s Dty2 Dne)
+<- weaken-ty-1 Dty1 Dga Dty2.
+
+weaken-ty-1/lam:
+   weaken-ty-1 
+      (ty/lam (Dty1: ty (gcons X1 T1 Ga) (e/u U) T2)
+              (Dwf: wf T1)
+         : ty Ga (e/u (u/lambda X1 T1 U)) (t/arrow T1 T2))
+      (Dga: g-append Ga X0 T0 Gb)
+      (ty/lam Dty2 Dwf)
+<- weaken-ty-1 
+      Dty1 
+      (g-append/s Dga: g-append (gcons X1 T1 Ga) X0 T0 (gcons X1 T1 Gb)) 
+      (Dty2: ty (gcons X1 T1 Gb) (e/u U) T2).
+
+weaken-ty-1/vinil:
+   weaken-ty-1 ty/vinil Dga ty/vinil.
+
+weaken-ty-1/vicons:
+   weaken-ty-1 
+      (ty/vicons (Dty1a: ty (gcons X T Ga) (e/u (u/vis VIs)) (t/vds VDs))
+                 (Dty2a: ty Ga E T)
+                 (Dniv: not-in-vis X VIs)
+         : ty Ga (e/u (u/vis (vicons X E VIs))) (t/vds (vdcons X T VDs)))
+      (Dga: g-append Ga X0 T0 Gb)
+      (ty/vicons Dty1b Dty2b Dniv)
+<- weaken-ty-1 Dty1a (g-append/s Dga) Dty1b
+<- weaken-ty-1 Dty2a Dga Dty2b.
+
+weaken-ty-1/app:
+   weaken-ty-1
+      (ty/app Dty1a Dty2a)
+      Dga
+      (ty/app Dty1b Dty2b)
+<- weaken-ty-1 Dty1a Dga Dty1b
+<- weaken-ty-1 Dty2a Dga Dty2b.
+
+weaken-ty-1/sel:
+   weaken-ty-1
+      (ty/sel Dvd Dty1a)
+      Dga
+      (ty/sel Dvd Dty1b)
+<- weaken-ty-1 Dty1a Dga Dty1b.
+
+weaken-ty-1/ctx:
+   weaken-ty-1 (ty/ctx Dty1 Deq) Dga (ty/ctx Dty1 Deq).
+
+weaken-ty-1/val:
+   weaken-ty-1 (ty/val Dvty) Dga (ty/val Dvty).
+
+%worlds () (weaken-ty-1 _ _ _).
+%total Dty1 (weaken-ty-1 Dty1 _ _).
+
+weaken-ty-gnil-N: {N: nat} g-length G N -> ty gnil E T ->
+                  ty G E T -> type.
+%mode             weaken-ty-gnil-N +N +Dlen +Dty1 -Dty2.
+weaken-ty-gnil-N/gnil:
+   weaken-ty-gnil-N z g-length/b Dty1 Dty1.
+weaken-ty-gnil-N/gcons:
+   weaken-ty-gnil-N (s N) 
+                    (g-length/s Dlen0: g-length (gcons X0 T0 G0) (s N))
+                    (Dty1: ty gnil E T)
+                    Dty3
+<- split-last-of-gcons X0 T0 G0 (Dga: g-append G2 X2 T2 (gcons X0 T0 G0))
+<- g-append-length Dga 
+                   (Dlen2: g-length G2 N)
+                   (g-length/s Dlen0)
+<- weaken-ty-gnil-N N Dlen2 Dty1 (Dty2: ty G2 E T)
+<- weaken-ty-1 Dty2 Dga (Dty3: ty (gcons X0 T0 G0) E T).
+%worlds () (weaken-ty-gnil-N _ _ _ _).
+%total N (weaken-ty-gnil-N N _ _ _).
+
+% Lemma: If something types in gnil, it also types in any g:
+weaken-ty-gnil:   ty gnil E T -> {G: g} ty G E T -> type.
+%mode             weaken-ty-gnil +Dty1 +G -Dty2.
+weaken-ty-gnil/-: weaken-ty-gnil Dty1 G Dty2
+                  <- g-length-proof G (Dlen: g-length G N)
+                  <- weaken-ty-gnil-N N Dlen Dty1 Dty2.
+%worlds () (weaken-ty-gnil _ _ _).
+%total Dty (weaken-ty-gnil Dty _ _).
+
+
+% -------- preservation --------
+
+preservation:  st-eq-g S G -> ty G (e/u U) T -> step S U R
+               -> ty gnil (e/r R) T -> type.
+%mode          preservation +Deq +Dty1 +Dstep -Dty2.
+
+
+vis-preservation:  st-eq-g S G 
+                   -> ty G (e/u (u/vis VIs1)) T
+                   -> step S (u/vis VIs1) (r/ctx S (u/vis VIs2))
+                   -> ty G (e/u (u/vis VIs2)) T -> type.
+%mode              vis-preservation +Deq +Dty1 +Dstep -Dty2.
+
+vis-preservation/head/wrap:
+   vis-preservation
+      (Deq: st-eq-g S G)
+      (ty/vicons (Dty1: ty (gcons X T G) (e/u (u/vis VIs)) (t/vds VDs))
+                 (Dty2: ty G (e/u U) T)
+                 (Dniv: not-in-vis X VIs)
+      : ty G (e/u (u/vis (vicons X (e/u U) VIs))) (t/vds (vdcons X T VDs)))
+      (step/subexpr/wrap subst-subexpr/vis/u get-subexpr/vis/u 
+        : step   S (u/vis (vicons X (e/u U) VIs))
+          (r/ctx S (u/vis (vicons X (e/r (r/ctx S U)) VIs))))
+      (ty/vicons Dty1 (ty/ctx Dty2 Deq) Dniv).
+
+vis-preservation/head/step:
+   vis-preservation
+      (Deq: st-eq-g S G)
+      (ty/vicons (Dty1: ty (gcons X T G) (e/u (u/vis VIs)) (t/vds VDs))
+                 (ty/ctx (Dty:  ty G1 (e/u U1) T)
+                         (Deq1: st-eq-g S1 G1)
+                     : ty G (e/r (r/ctx S1 U1)) T)
+                 (Dniv: not-in-vis X VIs)
+         : ty G (e/u (u/vis (vicons X (e/r (r/ctx S1 U1)) VIs)))
+                (t/vds (vdcons X T VDs)))
+      (step/subexpr/step subst-subexpr/vis/c Dstep get-subexpr/vis/c
+        : step   S (u/vis (vicons X (e/r (r/ctx S1 U1)) VIs))
+          (r/ctx S (u/vis (vicons X (e/r       R      ) VIs))))
+      (ty/vicons Dty1 Dty2w Dniv
+         : ty G (e/u (u/vis (vicons X (e/r R) VIs)))
+                (t/vds (vdcons X T VDs)))
+<- preservation Deq1 Dty (Dstep: step S1 U1 R)
+                (Dty2: ty gnil (e/r R) T)
+<- weaken-ty-gnil Dty2 G Dty2w.
+
+vis-preservation/tail:
+   vis-preservation
+      Deq
+      (ty/vicons  (Dty1: ty (gcons X T G) (e/u (u/vis VIs1)) (t/vds VDs))
+                  (ty/val Dvty: ty G (e/r (r/val V)) T)
+                  (Dniv1: not-in-vis X VIs1)
+            : ty G (e/u (u/vis (vicons X (e/r (r/val V)) VIs1)))
+                   (t/vds (vdcons X T VDs)))
+      (step/vis/tail Dstep
+         : step   S (u/vis (vicons X (e/r (r/val V)) VIs1))
+           (r/ctx S (u/vis (vicons X (e/r (r/val V)) VIs2))))
+      (ty/vicons Dty2 (ty/val Dvty) Dniv2)
+<- vis-preservation (st-eq-g/s Deq Dvty) Dty1 Dstep
+      (Dty2: ty (gcons X T G) (e/u (u/vis VIs2)) (t/vds VDs))
+<- not-in-vis-lemma Dniv1 Dty1 Dty2 (Dniv2: not-in-vis X VIs2).
+
+
+
+preservation/var/b:
+   preservation
+      (st-eq-g/s (Deq: st-eq-g S G) (Dvty: vty V T))
+      (ty/v/b: ty (gcons X T G) (e/u (u/var X)) T)
+      (step/var/b: step (stcons X V S) (u/var X) (r/val V))
+      (ty/val Dvty).
+
+preservation/var/s:
+   preservation
+      (st-eq-g/s (Deq: st-eq-g S G) (Dvty: vty V2 T2))
+      (ty/v/s (Dty: ty G (e/u (u/var X1)) T1)
+              (Dne: ne X1 X2)
+         : ty (gcons X2 T2 G) (e/u (u/var X1)) T1)
+      (step/var/s Dne-same-but-unused
+         : step (stcons X2 V2 S) (u/var X1) 
+                (r/ctx        S  (u/var X1)))
+      (ty/ctx Dty Deq).
+
+preservation/var/contradiction-1:
+   preservation
+      (Deq: st-eq-g (stcons X1 V S) (gcons X2 T2 G))
+      (ty/v/s (Dty: ty G (e/u (u/var X1)) T1)
+              (Dne: ne X1 X2)
+         : ty (gcons X2 T2 G) (e/u (u/var X1)) T1)
+      Dstep
+      Dty2
+<- is-bad-st-eq-g Deq Dne Dfalse
+<- false>ty Dfalse gnil _ _ Dty2.
+
+preservation/var/contradiction-2:
+   preservation
+      (Deq: st-eq-g (stcons X1 V1 S1) (gcons X2 T1 G1))
+      ty/v/b
+      (step/var/s (Dne: ne X2 X1))
+      Dty2
+<- ne-sym Dne Dne2
+<- is-bad-st-eq-g Deq Dne2 Dfalse
+<- false>ty Dfalse gnil _ _ Dty2.
+
+preservation/lambda:
+   preservation 
+      Deq
+      (ty/lam (Dty: ty (gcons X T1 G) (e/u U) T2)
+              (Dwf: wf T1)
+         : ty G (e/u (u/lambda X T1 U)) (t/arrow T1 T2))
+      (step/lambda: step S (u/lambda X T1 U) (r/val (val/clos S X T1 U)))
+      (ty/val (vty/clos Dty Deq)).
+
+preservation/vis/delegate:
+   preservation Deq (Dty1: ty G (e/u (u/vis VIs1)) (t/vds VDs)) Dstep
+      (ty/ctx Dty2 Deq)
+<- vis-preservation Deq Dty1 Dstep Dty2.
+
+preservation/vis/done:
+   preservation
+      Deq
+      (Dty: ty G (e/u (u/vis VIs)) (t/vds VDs))
+      (step/vis/done (Dvr: vis>rvs VIs RVs)
+         : step S (u/vis VIs) (r/val (val/rvs RVs)))
+      (ty/val Dvty)
+<- vis>rvs-preservation Dty Dvr (Dvty: vty (val/rvs RVs) (t/vds VDs)).
+
+preservation/app/func/wrap:
+   preservation
+      Deq
+      (ty/app (Dty1: ty G A TA)
+              (Dty2: ty G (e/u F) (t/arrow TA TR))
+         : ty G (e/u (u/app (e/u F) A)) TR)
+      (step/subexpr/wrap subst-subexpr/app/f/u get-subexpr/app/f/u
+               : step   S (u/app (e/u F) A)
+                 (r/ctx S (u/app (e/r (r/ctx S F)) A)))
+      (ty/ctx (ty/app Dty1 (ty/ctx Dty2 Deq)) Deq).
+
+preservation/app/func/step:
+   preservation
+      (Deq: st-eq-g S G)
+      (ty/app (Dty1: ty G A TA)
+              (ty/ctx (Dty:  ty G1 (e/u F1) (t/arrow TA TR))
+                      (Deq1: st-eq-g S1 G1)
+                  : ty G (e/r (r/ctx S1 F1)) (t/arrow TA TR))
+         : ty G (e/u (u/app (e/r (r/ctx S1 F1)) A)) TR)
+      (step/subexpr/step subst-subexpr/app/f/c Dstep get-subexpr/app/f/c
+         : step   S (u/app (e/r (r/ctx S1 F1)) A)
+           (r/ctx S (u/app (e/r        R     ) A)))
+      (ty/ctx (ty/app Dty1 Dty2w
+         : ty G (e/u (u/app (e/r R) A)) TR) Deq)
+<- preservation Deq1 Dty (Dstep: step S1 F1 R)
+                (Dty2: ty gnil (e/r R) (t/arrow TA TR))
+<- weaken-ty-gnil Dty2 G Dty2w.
+
+preservation/app/arg/wrap:
+   preservation
+      (Deq: st-eq-g S G)
+      (ty/app (Dty1: ty G (e/u A) TA)
+              (Dty2: ty G (e/r (r/val VF)) (t/arrow TA TR))
+         : ty G (e/u (u/app (e/r (r/val VF)) (e/u A))) TR)
+      (step/subexpr/wrap subst-subexpr/app/a/u get-subexpr/app/a/u
+         : step   S (u/app (e/r (r/val VF)) (e/u A))
+           (r/ctx S (u/app (e/r (r/val VF)) (e/r (r/ctx S A)))))
+      (ty/ctx (ty/app (ty/ctx Dty1 Deq) Dty2) Deq).
+
+preservation/app/arg/step:
+   preservation
+      (Deq: st-eq-g S G)
+      (ty/app (ty/ctx (Dty:  ty G1 (e/u A1) TA)
+                      (Deq1: st-eq-g S1 G1)
+                  : ty G (e/r (r/ctx S1 A1)) TA)
+              (Dty1: ty G (e/r (r/val VF)) (t/arrow TA TR))
+         : ty G (e/u (u/app (e/r (r/val VF)) (e/r (r/ctx S1 A1)))) TR)
+      (step/subexpr/step subst-subexpr/app/a/c Dstep get-subexpr/app/a/c
+         : step   S (u/app (e/r (r/val VF)) (e/r (r/ctx S1 A1)))
+           (r/ctx S (u/app (e/r (r/val VF)) (e/r        R     ))))
+      (ty/ctx (ty/app Dty2w Dty1
+         : ty G (e/u (u/app (e/r (r/val VF)) (e/r R))) TR) Deq)
+<- preservation Deq1 Dty (Dstep: step S1 A1 R)
+                (Dty2: ty gnil (e/r R) TA)
+<- weaken-ty-gnil Dty2 G Dty2w.
+
+preservation/app/app:
+   preservation
+      (Deq: st-eq-g S G)
+      (ty/app 
+            (ty/val Dvty: ty G (e/r (r/val V)) TA)
+            (ty/val (vty/clos 
+                        (Dty0: ty (gcons X TA Gc) (e/u U) TR)
+                        (Deq0: st-eq-g Sc Gc))
+               : ty G (e/r (r/val (val/clos Sc X TA U))) (t/arrow TA TR))
+         : ty G (e/u (u/app (e/r (r/val (val/clos Sc X TA U)))
+                            (e/r (r/val V)))) TR)
+      (step/app: step S (u/app (e/r (r/val (val/clos Sc X TA U)))
+                               (e/r (r/val V)))
+                      (r/ctx (stcons X V Sc) U))
+      (ty/ctx Dty0 (st-eq-g/s Deq0 Dvty
+                        : st-eq-g (stcons X V Sc) (gcons X TA Gc))
+         : ty gnil (e/r (r/ctx (stcons X V Sc) U)) TR).
+
+preservation/sel/wrap:
+   preservation
+      (Deq: st-eq-g S G)
+      (ty/sel (Dvd: vd-lookup VDs X T)
+              (Dty: ty G (e/u U) (t/vds VDs))
+         : ty G (e/u (u/sel (e/u U) X)) T)
+      (step/subexpr/wrap subst-subexpr/sel/u get-subexpr/sel/u
+         : step   S (u/sel (e/u U) X)
+           (r/ctx S (u/sel (e/r (r/ctx S U)) X)))
+      (ty/ctx (ty/sel Dvd (ty/ctx Dty Deq)) Deq).
+
+preservation/sel/step:
+   preservation
+      (Deq: st-eq-g S G)
+      (ty/sel (Dvd: vd-lookup VDs X T)
+              (ty/ctx (Dty:  ty G1 (e/u U1) (t/vds VDs))
+                      (Deq1: st-eq-g S1 G1)
+                  : ty G (e/r (r/ctx S1 U1)) (t/vds VDs))
+         : ty G (e/u (u/sel (e/r (r/ctx S1 U1)) X)) T)
+      (step/subexpr/step subst-subexpr/sel/c Dstep get-subexpr/sel/c
+         : step   S (u/sel (e/r (r/ctx S1 U1)) X)
+           (r/ctx S (u/sel (e/r       R      ) X)))
+      (ty/ctx (ty/sel Dvd Dty2w
+         : ty G (e/u (u/sel (e/r R) X)) T) Deq)
+<- preservation Deq1 Dty (Dstep: step S1 U1 R)
+                (Dty2: ty gnil (e/r R) (t/vds VDs))
+<- weaken-ty-gnil Dty2 G Dty2w.
+
+preservation/sel/sel:
+   preservation
+      (Deq: st-eq-g S G)
+      (ty/sel (Dvd: vd-lookup VDs X T)
+              (ty/val Dvty
+                  : ty G (e/r (r/val (val/rvs RVs))) (t/vds VDs))
+         : ty G (e/u (u/sel (e/r (r/val (val/rvs RVs))) X)) T)
+      (step/sel (Drvl: rv-lookup RVs X V)
+         : step S (u/sel (e/r (r/val (val/rvs RVs))) X) (r/val V))
+      (ty/val Dvty0)
+<- sel-preservation Dvd Dvty Drvl Dvty0.
+
+%worlds () (vis-preservation _ _ _ _) (preservation _ _ _ _).
+%terminates (Dstep1 Dstep2) (vis-preservation _ _ Dstep1 _) 
+                            (preservation     _ _ Dstep2 _).
+%total (Dstep1 Dstep2)      (vis-preservation _ _ Dstep1 _) 
+                            (preservation     _ _ Dstep2 _).
+
+
+% -------- summary --------
+
+progress-thm:     % in:  (context S U) && U types
+                  st-eq-g S G -> ty G (e/u U) T
+                  % out: there's a step
+                  -> step S U R -> type.
+%mode             progress-thm +Deq +Dty -Dstep.
+-: progress-thm Deq Dty Dstep
+<- progress     Deq Dty Dstep.
+%worlds () (progress-thm _ _ _).
+%total Dty (progress-thm _ Dty _).
+
+preservation-thm: st-eq-g S G -> ty G (e/u U) T -> step S U R
+                  -> ty gnil (e/r R) T -> type.
+%mode             preservation-thm +Deq +Dty1 +Dstep -Dty2.
+-: preservation-thm Dst Dty1 Dstep Dty2
+<- preservation     Dst Dty1 Dstep Dty2.
+%worlds () (preservation-thm _ _ _ _).
+%total Dstep (preservation-thm _ _ Dstep _).
+

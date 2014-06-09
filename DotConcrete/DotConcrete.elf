@@ -1,0 +1,1080 @@
+
+% Types can have type declarations (td), value declarations (vd) 
+% and method declarations (md).
+% Nested expressions are not allowed ().
+% Small step operational semantics (sstep).
+% Subtyping with one environment only, and with alpha-renaming of t/bind.
+
+% echo -e "set unsafe true\nloadFile DotConcrete.elf" | /usr/local/twelf/bin/twelf-server
+
+% -------- Language definition ---------------------------------------------
+
+% -------- arithmetics --------
+
+nat: type.
+zero: nat.
+succ: nat -> nat.
+
+eq: nat -> nat -> type.
+%mode eq +N1 +N2.
+%name eq Deq.
+eq/zero: eq zero zero.
+eq/succ: eq (succ N1) (succ N2)
+   <- eq N1 N2.
+
+ne: nat -> nat -> type.
+%mode ne +N1 +N2.
+%name ne Dne.
+ne/z1: ne zero (succ N).
+ne/z2: ne (succ N) zero.
+ne/succ: ne (succ N1) (succ N2)
+   <- ne N1 N2.
+
+max: nat -> nat -> nat -> type.
+%mode max +N1 +N2 -N3.
+%name max Dmax.
+max/z1: max zero N N.
+max/z2: max (succ N) zero (succ N).
+max/succ: max (succ N1) (succ N2) (succ N3)
+   <- max N1 N2 N3.
+%worlds () (max _ _ _).
+%total N (max N _ _).
+
+0: nat = zero.
+1: nat = (succ 0).
+2: nat = (succ 1).
+3: nat = (succ 2).
+4: nat = (succ 3).
+5: nat = (succ 4).
+6: nat = (succ 5).
+7: nat = (succ 6).
+8: nat = (succ 7).
+9: nat = (succ 8).
+10: nat = (succ 9).
+11: nat = (succ 10).
+12: nat = (succ 11).
+13: nat = (succ 12).
+14: nat = (succ 13).
+15: nat = (succ 14).
+
+
+% additional names for nat to make their meaning clearer:
+%abbrev id = nat. % identifier
+%abbrev o  = nat. % pointer to l*o*cation in store
+
+% some commonly used identifiers (in the examples):
+$x: id = 0.
+$y: id = 1.
+$z: id = 2.
+$glob: id = 3.
+$f: id = 4.
+$m: id = 5.
+$Nat: id = 6.
+$zero: id = 7.
+$succ: id = 8.
+$empty: id = 9.
+$go: id = 10.
+$Succ: id = 11.
+$pred: id = 12.
+$s: id = 13.
+$one: id = 14.
+$two: id = 15.
+
+% -------- grammar --------
+
+t: type. %name t T.  % type
+e: type. %name e E.  % expression
+p: type. %name p P.  % path
+v: type. %name v V.  % value
+
+% types
+t/top: t.
+t/bot: t.
+t/t: id -> t -> t -> t. % { type T: T1 .. T2 }
+t/v: id -> t -> t.      % { val x: T }
+t/m: id -> t -> t -> t. % { def f(x: T1): T2 }
+t/sel: p -> id -> t.    % p.T
+t/and: t -> t -> t.     % T1 intersect T2
+t/or: t -> t -> t.      % T1 union T2
+t/bind: id -> t -> t.   % { self => T }
+
+% initialisations (do not carry name, but only rhs)
+i: type. %name i I.
+i/t: t -> t -> i.
+i/v: t -> v -> i.
+i/m: id -> t -> t -> e -> i.
+
+% list of initialisations
+is: type. %name is Is.
+inil: is.
+icons: id -> i -> is -> is.
+
+% values
+v/var: id -> v.
+v/o: o -> v.
+
+% paths
+p/v: v -> p.
+p/sel: p -> id -> p.
+
+% expressions
+e/app: v -> id -> v -> e.   % v.method(arg)
+e/p: p -> e.                % upcast path to e
+e/new: id -> is -> e -> e.  % let x = new { <initializations> } in expr
+e/let: id -> e -> e -> e.   % let x = expr1 in expr2
+
+% Global store, i-th element corresponds to pointer i. 
+% The value initializations must only assign v/o, v/var is not allowed.
+s: type. %name s S.
+snil: s.
+scons: s -> is -> s.
+
+% Gamma: (x: T) mappings. If a gamma contains several mappings for the same 
+% x, only the most recent (right-most) counts.
+g: type. %name g G.
+gnil: g.
+gcons: g -> id -> t -> g.
+
+
+% -------- generating fresh names --------
+
+% return a variable name which is greater than all other variable names
+% in given arg
+t-fresh-name:   t -> id -> type.
+v-fresh-name:   v -> id -> type.
+p-fresh-name:   p -> id -> type.
+g-fresh-name:   g -> id -> type.
+
+%mode t-fresh-name +T -X.
+%mode v-fresh-name +V -X.
+%mode p-fresh-name +P -X.
+%mode g-fresh-name +G -X.
+
+t-fresh-name/top: t-fresh-name t/top zero.
+t-fresh-name/bot: t-fresh-name t/bot zero.
+t-fresh-name/t: t-fresh-name (t/t L Lo Up) N3
+   <- t-fresh-name Lo N1
+   <- t-fresh-name Up N2
+   <- max N1 N2 N3.
+t-fresh-name/v: t-fresh-name (t/v X T) N
+   <- t-fresh-name T N.
+t-fresh-name/m: t-fresh-name (t/m M TA TR) N3
+   <- t-fresh-name TA N1
+   <- t-fresh-name TR N2
+   <- max N1 N2 N3.
+t-fresh-name/sel: t-fresh-name (t/sel P L) N
+   <- p-fresh-name P N.
+t-fresh-name/and: t-fresh-name (t/and T1 T2) N3
+   <- t-fresh-name T1 N1
+   <- t-fresh-name T2 N2
+   <- max N1 N2 N3.
+t-fresh-name/or: t-fresh-name (t/or T1 T2) N3
+   <- t-fresh-name T1 N1
+   <- t-fresh-name T2 N2
+   <- max N1 N2 N3.
+t-fresh-name/bind: t-fresh-name (t/bind N1 T) N3
+   <- t-fresh-name T N2
+   <- max (succ N1) N2 N3.
+
+v-fresh-name/o: v-fresh-name (v/o O) zero.
+v-fresh-name/var: v-fresh-name (v/var N) (succ N).
+
+p-fresh-name/sel: p-fresh-name (p/sel P X) N
+   <- p-fresh-name P N.
+p-fresh-name/v: p-fresh-name (p/v V) N <- v-fresh-name V N.
+
+g-fresh-name/nil: g-fresh-name gnil zero.
+g-fresh-name/cons: g-fresh-name (gcons G N2 T) Max2
+   <- g-fresh-name G N1
+   <- t-fresh-name T N3
+   <- max N1 (succ N2) Max1
+   <- max Max1 N3 Max2.
+
+%worlds () 
+   (t-fresh-name _ _)
+   (v-fresh-name _ _)
+   (p-fresh-name _ _)
+   (g-fresh-name _ _).
+%total (T V P G) 
+   (t-fresh-name T _)
+   (v-fresh-name V _)
+   (p-fresh-name P _)
+   (g-fresh-name G _).
+
+
+% -------- substitution --------
+
+% Substitute (v/var X) by (v/var Y) or (v/o O).
+e-subst:   id -> o -> e -> e -> type.
+t-subst:   id -> v -> t -> t -> type.
+v-subst:   id -> v -> v -> v -> type.
+p-subst:   id -> v -> p -> p -> type.
+is-subst:  id -> o -> is -> is -> type.
+i-subst:   id -> o -> i -> i -> type.
+
+%mode e-subst +X +O +E1 -E2.
+%mode t-subst +X +V +T1 -T2.
+%mode v-subst +X +V +V1 -V2.
+%mode p-subst +X +V +P1 -P2.
+%mode is-subst +X +O +Is1 -Is2.
+%mode i-subst +X +O +I1 -I2.
+
+v-subst/o: v-subst X V (v/o O) (v/o O).
+v-subst/var-same: v-subst X V (v/var X) V.
+v-subst/var-diff: v-subst X1 V (v/var X2) (v/var X2) <- ne X1 X2.
+
+p-subst/v: p-subst X V (p/v V1) (p/v V2)
+   <- v-subst X V V1 V2.
+p-subst/sel:
+   p-subst X V (p/sel P1 L) (p/sel P2 L)
+   <- p-subst X V P1 P2.
+
+e-subst/p:
+   e-subst X O (e/p P1) (e/p P2)
+   <- p-subst X (v/o O) P1 P2.
+e-subst/app:
+   e-subst X O (e/app R1 M A1) (e/app R2 M A2)
+   <- e-subst X O (e/p (p/v R1)) (e/p (p/v R2))
+   <- e-subst X O (e/p (p/v A1)) (e/p (p/v A2)).
+e-subst/new-same:
+   e-subst X O (e/new X Is E) (e/new X Is E).
+e-subst/new-diff:
+   e-subst X O (e/new Y Is1 E1) 
+               (e/new Y Is2 E2)
+   <- ne X Y
+   <- is-subst X O Is1 Is2
+   <- e-subst X O E1 E2.
+e-subst/let-same:
+   e-subst X O (e/let X E1 E2) (e/let X E1 E2).
+e-subst/let-diff:
+   e-subst X O (e/let Y Ea1 Eb1) (e/let Y Ea2 Eb2) 
+   <- ne X Y
+   <- e-subst X O Ea1 Ea2
+   <- e-subst X O Eb1 Eb2.
+
+t-subst/top: t-subst X V t/top t/top.
+t-subst/bot: t-subst X V t/bot t/bot.
+t-subst/t: t-subst X V (t/t L S1 U1) (t/m L S2 U2)
+   <- t-subst X V S1 S2
+   <- t-subst X V U1 U2.
+t-subst/v: t-subst X V (t/v Y T1) (t/v Y T2)
+   <- t-subst X V T1 T2.
+t-subst/m: t-subst X V (t/m M TA1 TR1) (t/m M TA2 TR2)
+   <- t-subst X V TA1 TA2
+   <- t-subst X V TR1 TR2.
+t-subst/sel: t-subst X V (t/sel P1 L) (t/sel P2 L)
+   <- p-subst X V P1 P2.
+t-subst/and: t-subst X V (t/and TL1 TR1) (t/and TL2 TR2)
+   <- t-subst X V TL1 TL2
+   <- t-subst X V TR1 TR2.
+t-subst/or: t-subst X V (t/or TL1 TR1) (t/or TL2 TR2)
+   <- t-subst X V TL1 TL2
+   <- t-subst X V TR1 TR2.
+t-subst/bind-same: t-subst X V (t/bind X T) (t/bind X T).
+t-subst/bind-diff/o: t-subst X (v/o O) (t/bind Y T1) (t/bind Y T2)
+   <- ne X Y
+   <- t-subst X (v/o O) T1 T2.
+% need to avoid variable capture if Z=Y1
+t-subst/bind-diff/var: t-subst X (v/var Z) (t/bind Y1 T1) (t/bind Y3 T3)
+   <- ne X Y1
+   <- t-fresh-name T1 N1
+   <- max (succ Y1) (succ Z) Max1
+   <- max Max1 N1 Y3
+   <- t-subst Y1 (v/var Y3) T1 T2
+   <- t-subst X  (v/var Z)  T2 T3.
+
+is-subst/b: is-subst X O inil inil.
+is-subst/s: is-subst X O (icons Y I1 Is1) (icons Y I2 Is2)
+   <- i-subst X O I1 I2
+   <- is-subst X O Is1 Is2.
+
+i-subst/t: i-subst X O (i/t S1 U1) (i/t S2 U2)
+   <- t-subst X (v/o O) S1 S2
+   <- t-subst X (v/o O) U1 U2.
+i-subst/v: i-subst X O (i/v T1 V1) (i/v T2 V2)
+   <- v-subst X (v/o O) V1 V2
+   <- t-subst X (v/o O) T1 T2.
+i-subst/m-same: 
+   i-subst X O (i/m X TA1 TR E) (i/m X TA2 TR E)
+   <- t-subst X (v/o O) TA1 TA2.
+i-subst/m-diff: 
+   i-subst X O (i/m Y TA1 TR1 E1) (i/m Y TA2 TR2 E2)
+   <- ne X Y
+   <- t-subst X (v/o O) TA1 TA2
+   <- t-subst X (v/o O) TR1 TR2
+   <- e-subst X O E1 E2.
+
+% Note: In
+% { x => { def m(x: x.L1): x.L2 = ... } }
+% x.L1 refers to L1 in the self-x, but x.L2 refers to L2 in arg-x.
+
+
+% -------- lookups --------
+
+% store layout: (... (scons (scons (scons snil O0) O1) O2) ...)
+
+s-size: s -> nat -> type.
+%mode s-size +S -N.
+%name s-size Dsize.
+s-size/b: s-size snil zero.
+s-size/s: s-size (scons S C) (succ N) <- s-size S N.
+
+s-lookup: s -> o -> is -> type.
+%mode s-lookup +S +O -Is.
+%name s-lookup Dsl.
+s-lookup/b: s-lookup (scons S Is) N Is <- s-size S N.
+s-lookup/s: s-lookup (scons S Is0) N Is1 <- s-lookup S N Is1.
+
+g-lookup: g -> id -> t -> type.
+%mode g-lookup +G +X -T.
+%name g-lookup Dgl.
+g-lookup/b: g-lookup (gcons G X T) X T.
+g-lookup/s: g-lookup (gcons G X0 T0) X T
+   <- g-lookup G X T
+   <- ne X0 X.
+
+i-lookup: is -> id -> i -> type.
+%mode i-lookup +Is +X -I.
+%name i-lookup Dil.
+i-lookup/b: i-lookup (icons X I Is) X I.
+i-lookup/s: i-lookup (icons X0 I0 Is) X I
+   <- i-lookup Is X I
+   <- ne X0 X.
+
+
+% -------- reduction --------
+
+% Reduction step:
+step: e -> s -> e -> s -> type.
+%name step Dstep.
+%mode step +E1 +S1 -E2 -S2.
+step/sel: step (e/p (p/sel (p/v (v/o O1)) X)) S (e/p (p/v (v/o O2))) S
+   <- s-lookup S O1 Is
+   <- i-lookup Is X (i/v T (v/o O2)).
+step/p: step (e/p (p/sel (p/sel P1 X) Y)) S (e/p (p/sel P2 Y)) S
+   <- step (e/p (p/sel P1 X)) S (e/p P2) S.
+step/app: step (e/app (v/o R) M (v/o A)) S E2 S
+   <- s-lookup S R Is
+   <- i-lookup Is M (i/m X T1 T2 E1)
+   <- e-subst X A E1 E2.
+step/new: step (e/new X Is1 E1) S1 E2 (scons S1 Is2)
+   <- s-size S1 N
+   <- e-subst X N E1 E2
+   <- is-subst X N Is1 Is2.
+step/let: step (e/let X (e/p (p/v (v/o O))) E1) S E2 S
+   <- e-subst X O E1 E2.
+step/subexpr: step (e/let X E1 E) S1 (e/let X E2 E) S2
+   <- step E1 S1 E2 S2.
+
+% Note: If a path is not a p/sel, it's either a p/v/o (nothing to do)
+% or a p/v/var (stuck), so we only need step rules for p/sel.
+
+
+% -------- reduction examples --------
+
+eval: e -> s -> o -> s -> type.
+%mode eval +E +S1 -O -S2.
+eval/b: eval (e/p (p/v (v/o O))) S O S.
+eval/s: eval E1 S1 O S3
+   <- step E1 S1 E2 S2
+   <- eval E2 S2 O S3.
+
+n-steps: nat -> e -> s -> e -> s -> type.
+%mode n-steps +N +E1 +S1 -E2 -S2.
+n-steps/b: n-steps zero E S E S.
+n-steps/s: n-steps (succ N) E1 S1 E3 S3
+   <- step E1 S1 E2 S2
+   <- n-steps N E2 S2 E3 S3.
+
+myexpr1: e = (e/new $glob
+  (icons $Nat (i/t t/bot (t/m $succ t/top (t/sel (p/v (v/var $glob)) $Nat)))
+  (icons $go  (i/m $x t/top t/top (e/new 
+      $zero inil 
+      (e/p (p/v (v/var $glob)))))
+   inil))
+(e/app (v/var $glob) $go (v/var $glob))).
+
+%solve D001: eval myexpr1 snil O001 S001.
+
+myexpr2: e = (e/new $glob
+   (icons $Nat  (i/t t/top t/top)
+   (icons $Succ (i/t (t/and (t/sel (p/v (v/var $glob)) $Nat)
+                            (t/v $pred (t/sel (p/v (v/var $glob)) $Nat)))
+                     (t/and (t/sel (p/v (v/var $glob)) $Nat)
+                            (t/v $pred (t/sel (p/v (v/var $glob)) $Nat))))
+   (icons $zero (i/v (t/sel (p/v (v/var $glob)) $Nat) (v/var $glob))
+   (icons $succ (i/m $x (t/sel (p/v (v/var $glob)) $Nat)
+                        (t/sel (p/v (v/var $glob)) $Succ) 
+      (e/new $s (icons $pred (i/v (t/sel (p/v (v/var $glob)) $Nat)
+                                  (v/var $x)) inil)
+      (e/p (p/v (v/var $s)))))
+   % go returns three
+   (icons $go (i/m $x t/top (t/sel (p/v (v/var $glob)) $Nat)
+      (e/let $zero (e/p (p/sel (p/v (v/var $glob)) $zero))
+         (e/let $one (e/app (v/var $glob) $succ (v/var $zero))
+            (e/let $two (e/app (v/var $glob) $succ (v/var $one))
+               (e/app (v/var $glob) $succ (v/var $two))))))
+   inil)))))
+(e/app (v/var $glob) $go (v/var $glob))).
+
+%solve D002: eval myexpr2 snil O002 S002.
+
+
+% -------- typing rules --------
+
+% extract the type of an initialization list, without any further checks
+extract-is-type: is -> t -> type.
+%mode extract-is-type +Is -T.
+extract-is-type/t: 
+   extract-is-type (icons L (i/t T1 T2) Is) (t/and (t/t L T1 T2) T)
+   <- extract-is-type Is T.
+extract-is-type/v:
+   extract-is-type (icons X1 (i/v T1 V1) Is) (t/and (t/v X1 T1) T)
+   <- extract-is-type Is T.
+extract-is-type/m:
+   extract-is-type (icons M (i/m X T1 T2 E) Is) (t/and (t/m M T1 T2) T)
+   <- extract-is-type Is T.
+extract-is-type/b:
+   extract-is-type inil t/top.
+
+% record type intersection
+rt-intersect: t -> t -> t -> type.
+%mode rt-intersect +T1 +T2 -R.
+rt-intersect/t: rt-intersect (t/t L Lo1 Hi1) (t/t L Lo2 Hi2) 
+                             (t/t L (t/or Lo1 Lo2) (t/and Hi1 Hi2)).
+rt-intersect/v: rt-intersect (t/v X T1) (t/v X T2)
+                             (t/v X (t/and T1 T2)).
+rt-intersect/m: rt-intersect (t/m M TA1 TR1) (t/m M TA2 TR2)
+                             (t/m M (t/or TA1 TA2) (t/and TR1 TR2)).
+
+% record type union
+rt-union: t -> t -> t -> type.
+%mode rt-union +T1 +T2 -R.
+rt-union/t: rt-union (t/t L Lo1 Hi1) (t/t L Lo2 Hi2) 
+                     (t/t L (t/and Lo1 Lo2) (t/or Hi1 Hi2)).
+rt-union/v: rt-union (t/v X T1) (t/v X T2)
+                     (t/v X (t/or T1 T2)).
+rt-union/m: rt-union (t/m M TA1 TR1) (t/m M TA2 TR2)
+                     (t/m M (t/and TA1 TA2) (t/or TR1 TR2)).
+
+% There are two kinds of paths: var paths and o paths.
+
+% resolve an o path
+o-p-resolve: s -> p -> o -> type.
+%mode o-p-resolve +S +P -O.
+o-p-resolve/o: o-p-resolve S (p/v (v/o O)) O.
+o-p-resolve/sel: o-p-resolve S (p/sel P X) O2
+   <- o-p-resolve S P O1
+   <- s-lookup S O1 Is
+   <- i-lookup Is X (i/v T (v/o O2)).
+
+% Wrap id (nat) in label type to explicitly say which kind of label we mean.
+% Usually it's clear from the context what kind of label we mean and we
+% don't wrap the nat, but in case of mem, it's necessary.
+label: type.
+label/t: id -> label.
+label/v: id -> label.
+label/m: id -> label.
+
+mem:     g -> s -> t -> label -> t -> type. % membership lookup
+not-mem: g -> s -> t -> label -> type.      % type has no member named id
+ub: g -> s -> p -> id -> t -> type.  % get upper bound of p.L
+lb: g -> s -> p -> id -> t -> type.  % get lower bound of p.L
+wf: g -> s -> t -> type.             % well formed types
+ty:  g -> s -> e -> t -> type.       % type assignment for expressions
+pty: g -> s -> p -> t -> type.       % type assignment for paths
+ity: g -> s -> id -> i -> t -> type. % type assignment for 1 initialization
+isty: g -> s -> is -> t -> type.     % type assignment for initializations
+subty: g -> s -> t -> t -> type.     % subtyping (one gamma for each type)
+
+%mode mem +G +S +T +X -R.
+%mode not-mem +G +S +T +X.
+%mode ub +G +S +P +L -T.
+%mode lb +G +S +P +L -T.
+%mode wf +G +S +T.
+%mode ty  +G +S +E -T.
+%mode pty +G +S +P -T.
+%mode ity +G +S +X +I -T. 
+%mode isty +G +S +Is -T.
+%mode subty +G +S +T1 +T2.
+
+%name mem Dmem.
+%name not-mem Dnotmem.
+%name ub Dub.
+%name lb Dlb.
+%name wf Dwf.
+%name ty Dty.
+%name pty Dpty.
+%name ity Dity.
+%name isty Disty.
+%name subty Dsub.
+
+ub/p: ub G S P L Up
+   <- ty G S (e/p P) T
+   <- mem G S T (label/t L) (t/t L Lo Up).
+
+lb/p: lb G S P L Lo
+   <- ty G S (e/p P) T
+   <- mem G S T (label/t L) (t/t L Lo Up).
+
+mem/bot/t:     mem G S t/bot (label/t L) (t/t L t/top t/bot).
+mem/bot/v:     mem G S t/bot (label/v V) (t/v V t/bot).
+mem/bot/m:     mem G S t/bot (label/m M) (t/m M t/top t/bot).
+mem/t:         mem G S (t/t L Lo Up) (label/t L) (t/t L Lo Up).
+mem/v:         mem G S (t/v X T) (label/v X) (t/v X T).
+mem/m:         mem G S (t/m M T1 T2) (label/m M) (t/m M T1 T2).
+mem/sel:       % lookup in a path type = lookup in its upper bound,
+               % can lead to infinite loops.
+               mem G S (t/sel P L) LBL R
+               <- ub G S P L Up
+               <- mem G S Up LBL R.
+mem/and12:     mem G S (t/and T1 T2) LBL R
+               <- mem G S T1 LBL R1
+               <- mem G S T2 LBL R2
+               <- rt-intersect R1 R2 R.
+mem/and1:      mem G S (t/and T1 T2) LBL R1
+               <- mem G S T1 LBL R1
+               <- not-mem G S T2 LBL.
+mem/and2:      mem G S (t/and T1 T2) LBL R2
+               <- not-mem G S T1 LBL
+               <- mem G S T2 LBL R2.
+mem/or:        mem G S (t/or T1 T2) LBL R
+               <- mem G S T1 LBL R1
+               <- mem G S T2 LBL R2
+               <- rt-union R1 R2 R. 
+mem/bind:      mem G S (t/bind Z T) LBL R
+               <- mem (gcons G Z T) S T LBL R.
+
+not-mem/top:   not-mem G S t/top LBL.
+not-mem/tt:    not-mem G S (t/t L1 _ _) (label/t L2) <- ne L1 L2.
+not-mem/tv:    not-mem G S (t/t _ _ _)  (label/v _).
+not-mem/tm:    not-mem G S (t/t _ _ _)  (label/m _).
+not-mem/vt:    not-mem G S (t/v _ _)  (label/t _).
+not-mem/vv:    not-mem G S (t/v X1 _) (label/v X2) <- ne X1 X2.
+not-mem/vm:    not-mem G S (t/v _ _)  (label/m _).
+not-mem/mt:    not-mem G S (t/m _ _ _)  (label/t _).
+not-mem/mv:    not-mem G S (t/m _ _ _)  (label/v _).
+not-mem/mm:    not-mem G S (t/m M1 _ _) (label/m M2) <- ne M1 M2.
+not-mem/sel:   % lookup in a path type = lookup in its upper bound,
+               % can lead to infinite loops.
+               not-mem G S (t/sel P L) LBL
+               <- ub G S P L Up
+               <- not-mem G S Up LBL.
+not-mem/and:   not-mem G S (t/and T1 T2) LBL
+               <- not-mem G S T1 LBL
+               <- not-mem G S T2 LBL.
+not-mem/or1:   not-mem G S (t/or T1 T2) LBL
+               <- not-mem G S T1 LBL.   
+not-mem/or2:   not-mem G S (t/or T1 T2) LBL
+               <- not-mem G S T2 LBL.   
+not-mem/bind:  not-mem G S (t/bind Z T) LBL
+               <- not-mem (gcons G Z T) S T LBL.
+
+wf/top:      wf G S t/top.
+wf/bot:      wf G S t/bot.
+wf/t:        wf G S (t/t L T1 T2) % Note: unrealizable bounds are allowed
+             <- wf G S T1
+             <- wf G S T2.
+wf/v:        wf G S (t/v X T)
+             <- wf G S T.
+wf/m:        wf G S (t/m M T1 T2)
+             <- wf G S T1
+             <- wf G S T2.
+             % TODO give the argument a name and allow T2 to depend on it
+             % <- wf (gcons G X T1) S T2.
+wf/sel:      wf G S (t/sel P L)
+             <- ty G S (e/p P) T0
+             <- mem G S T0 (label/t L) (t/t L Lo Up). % <-- the whole point of wf
+             % these are not required (avoid infinite loops):
+             % <- wf G S Lo
+             % <- wf G S Up.
+wf/and:      wf G S (t/and T1 T2)
+             <- wf G S T1
+             <- wf G S T2.
+wf/or:       wf G S (t/or T1 T2)
+             <- wf G S T1
+             <- wf G S T2.
+wf/bind:     wf G S (t/bind Z T)
+             <- wf (gcons G Z T) S T. 
+             % TODO: might be dangerous if there's a rule "T in G => T wf"
+
+
+ity/t: ity G S L (i/t T1 T2) (t/t L T1 T2)
+   <- wf G S T1
+   <- wf G S T2
+   <- subty G S T1 T2. % Note: unrealizable bounds are not allowed
+ity/v: ity G S X (i/v T V) (t/v X T)
+   <- wf G S T
+   <- ty G S (e/p (p/v V)) T0
+   <- subty G S T0 T.
+ity/m: ity G S M (i/m X TA TR E) (t/m M TA TR)
+   <- wf G S TA
+   <- wf G S TR
+   <- ty (gcons G X TA) S E TR0
+   <- subty G S TR0 TR.
+
+not-in-is: is -> id -> type.
+%mode not-in-is +Is +Id.
+not-in-is/nil: not-in-is inil X.
+not-in-is/cons: not-in-is (icons X1 I Is) X2
+   <- ne X1 X2
+   <- not-in-is Is X2.
+
+isty/nil: isty G S inil t/top.
+isty/s: isty G S (icons X I Is) (t/and T1 T2)
+   <- not-in-is Is X
+   <- ity G S X I T1
+   <- isty G S Is T2.
+
+ty/app: ty G S (e/app V1 M V2) TR
+   <- ty G S (e/p (p/v V1)) TO
+   <- ty G S (e/p (p/v V2)) TA1
+   <- mem G S TO (label/m M) (t/m M TA2 TR)
+   <- subty G S TA1 TA2.
+ty/p/var: ty G S (e/p (p/v (v/var X))) T
+   <- g-lookup G X T.
+ty/p/o: ty G S (e/p (p/v (v/o O))) T
+   <- s-lookup S O Is
+   <- isty G S Is T.
+ty/p/sel: ty G S (e/p (p/sel P X)) T
+   <- ty G S (e/p P) T0
+   <- mem G S T0 (label/v X) (t/v X T).
+ty/new: ty G S (e/new X Is E) TE
+   <- extract-is-type Is T
+   <- isty (gcons G X T) S Is T
+   <- ty (gcons G X T) S E TE.
+ty/let: ty G S (e/let X E1 E2) T2
+   <- ty G S E1 T1
+   <- ty (gcons G X T1) S E2 T2.
+
+% subty only for wf types
+
+subty/refl: subty G S T T
+   <- wf G S T.
+subty/top: subty G S T t/top 
+   <- wf G S T.
+subty/bot: subty G S t/bot T 
+   <- wf G S T.
+subty/t: subty G S (t/t L Lo1 Up1) (t/t L Lo2 Up2)
+   <- subty G S Lo2 Lo1
+   <- subty G S Up1 Up2.
+subty/v: subty G S (t/v X T1) (t/v X T2)
+   <- subty G S T1 T2.
+subty/m: subty G S (t/m M TA1 TR1) (t/m M TA2 TR2)
+   <- subty G S TA2 TA1
+   <- subty G S TR1 TR2.
+subty/sel1: subty G S (t/sel P L) T
+   <- ub G S P L Up
+   <- subty G S Up T.
+subty/sel2: subty G S T (t/sel P L)
+   <- lb G S P L Lo
+   <- subty G S T Lo.
+subty/and0: subty G S T (t/and T1 T2)
+   <- subty G S T T1
+   <- subty G S T T2.
+subty/and1: subty G S (t/and T1 T2) T
+   <- subty G S T1 T.
+subty/and2: subty G S (t/and T1 T2) T
+   <- subty G S T2 T.
+subty/or0: subty G S (t/or T1 T2) T
+   <- subty G S T1 T
+   <- subty G S T2 T.
+subty/or1: subty G S T (t/or T1 T2)
+   <- subty G S T T1.
+subty/or2: subty G S T (t/or T1 T2)
+   <- subty G S T T2.
+subty/bind1: subty G S (t/bind Z1 TL1) TR
+   <- g-fresh-name G N2
+   <- t-fresh-name TL1 N3
+   <- t-fresh-name TR N4
+   <- max (succ Z1) N2 Max1
+   <- max Max1 N3 Max2
+   <- max Max2 N4 Z2
+   <- t-subst Z1 (v/var Z2) TL1 TL2
+   <- subty (gcons G Z2 TL2) S TL2 TR.
+subty/bind2: subty G S TL (t/bind Z1 TR1)
+   <- g-fresh-name G N2
+   <- t-fresh-name TR1 N3
+   <- t-fresh-name TL N4
+   <- max (succ Z1) N2 Max1
+   <- max Max1 N3 Max2
+   <- max Max2 N4 Z2
+   <- t-subst Z1 (v/var Z2) TR1 TR2
+   <- subty (gcons G Z2 TR2) S TL TR2.
+
+
+% -------- typing examples --------
+
+%solve D003: ty gnil snil myexpr1 T003.
+
+%solve D004: ty gnil snil myexpr2 T004.
+
+log: type.
+lognil: log.
+logcons: s -> e -> t -> log -> log.
+
+% create a "preservation log":
+pres-log: s -> e -> log -> type.
+%mode pres-log +S +E -Log.
+pres-log/done: pres-log S (e/p (p/v (v/o O))) 
+                        (logcons S (e/p (p/v (v/o O))) T lognil)
+               <- ty gnil S (e/p (p/v (v/o O))) T.
+pres-log/step: pres-log S1 E1 (logcons S1 E1 T1 Log)
+   <- ty gnil S1 E1 T1
+   <- step E1 S1 E2 S2
+   <- pres-log S2 E2 Log.
+
+% These queries DO NOT (TODO) work, but they spam the output:
+% %solve DLog001: pres-log snil myexpr1 Log001.
+% %solve DLog002: pres-log snil myexpr2 Log002.
+
+
+% -------- Proofs ----------------------------------------------------------
+
+% -------- substitution is total --------
+
+ e-subst-total:  {X: id} {O: o} {E1: e}    e-subst X O E1  E2  -> type.
+ t-subst-total:  {X: id} {V: v} {T1: t}    t-subst X V T1  T2  -> type.
+ v-subst-total:  {X: id} {V: v} {V1: v}    v-subst X V V1  V2  -> type.
+ p-subst-total:  {X: id} {V: v} {P1: p}    p-subst X V P1  P2  -> type.
+is-subst-total:  {X: id} {O: o} {Is1: is} is-subst X O Is1 Is2 -> type.
+ i-subst-total:  {X: id} {O: o} {I1: i}    i-subst X O I1  I2  -> type.
+
+%mode  e-subst-total +X +O +E1  -D.
+%mode  t-subst-total +X +V +T1  -D.
+%mode  v-subst-total +X +V +V1  -D.
+%mode  p-subst-total +X +V +P1  -D.
+%mode is-subst-total +X +O +Is1 -D.
+%mode  i-subst-total +X +O +I1  -D.
+
+%worlds ()
+   ( e-subst-total _ _ _ _)
+   ( t-subst-total _ _ _ _)
+   ( v-subst-total _ _ _ _)
+   ( p-subst-total _ _ _ _)
+   (is-subst-total _ _ _ _)
+   ( i-subst-total _ _ _ _).
+%trustme %total (E T V P Is I)
+   ( e-subst-total _ _ E  _)
+   ( t-subst-total _ _ T  _)
+   ( v-subst-total _ _ V  _)
+   ( p-subst-total _ _ P  _)
+   (is-subst-total _ _ Is _)
+   ( i-subst-total _ _ I  _).
+
+% -------- uniqueness proofs --------
+
+tsame: t -> t -> type.
+tsame/refl: tsame T T.
+
+ty-unique: ty G S E T1 -> ty G S E T2 -> tsame T1 T2 -> type.
+%mode ty-unique +Dty1 +Dty2 -Dtsame.
+% TODO ;-)
+%worlds () (ty-unique _ _ _).
+%trustme %total Dty (ty-unique Dty _ _).
+
+ub-unique: ub G S P L Up1 -> ub G S P L Up2 -> tsame Up1 Up2 -> type.
+%mode ub-unique +Dub1 +Dub2 -Dtsame.
+% TODO ;-)
+%worlds () (ub-unique _ _ _).
+%trustme %total Dub (ub-unique Dub _ _).
+
+lb-unique: lb G S P L Lo1 -> lb G S P L Lo2 -> tsame Lo1 Lo2 -> type.
+%mode lb-unique +Dlb1 +Dlb2 -Dtsame.
+% TODO ;-)
+%worlds () (lb-unique _ _ _).
+%trustme %total Dlb (lb-unique Dlb _ _).
+
+mem-unique: mem G S T X R1 -> mem G S T X R2 -> tsame R1 R2 -> type.
+%mode mem-unique +Dmem1 +Dmem2 -Dtsame.
+% TODO ;-)
+%worlds () (mem-unique _ _ _).
+%trustme %total Dmem (mem-unique Dmem _ _).
+
+% --------
+
+% for all N1, N2 either they're the same or they're different
+neorsame: nat -> nat -> type.
+neorsame/ne: neorsame N1 N2 <- ne N1 N2.
+neorsame/same: neorsame N N.
+
+inc-neorsame: neorsame N1 N2 -> neorsame (succ N1) (succ N2) -> type.
+%mode inc-neorsame +D1 -D2.
+-: inc-neorsame neorsame/same neorsame/same.
+-: inc-neorsame (neorsame/ne Dne) (neorsame/ne (ne/succ Dne)).
+%worlds () (inc-neorsame _ _).
+%total D (inc-neorsame D _).
+
+mk-neorsame: {N1: nat} {N2: nat} neorsame N1 N2 -> type.
+%mode mk-neorsame +N1 +N2 -D.
+mk-neorsame/zz: mk-neorsame zero zero neorsame/same.
+mk-neorsame/z1: mk-neorsame zero (succ N) (neorsame/ne ne/z1).
+mk-neorsame/z2: mk-neorsame (succ N) zero (neorsame/ne ne/z2).
+mk-neorsame/s:  mk-neorsame (succ N1) (succ N2) D2
+   <- mk-neorsame N1 N2 D1
+   <- inc-neorsame D1 D2.
+%worlds () (mk-neorsame _ _ _).
+%total N (mk-neorsame N _ _).
+
+% -------- reasoning from false --------
+
+% the uninhabited type:
+false:   type.
+%name false Dfalse.
+%freeze false.
+
+ne-same-false:       ne X X -> false -> type.
+%mode                ne-same-false +Dne -Dfalse.
+-: ne-same-false (ne/succ Dne: ne (succ N) (succ N)) Df <- ne-same-false Dne Df.
+%worlds ()          (ne-same-false _ _).
+%total Dne          (ne-same-false Dne _).
+
+false-subty: false -> {G: g} {S: s} {T1: t} {T2: t} subty G S T1 T2 -> type.
+%mode false-subty +Dfalse +G +S +T1 +T2 -Dsubty.
+%worlds () (false-subty _ _ _ _ _ _).
+%total D (false-subty D _ _ _ _ _).
+
+false-i-lookup: false -> {Is: is} {X: id} {I: i} i-lookup Is X I -> type.
+%mode false-i-lookup +Dfalse +Is +X +I -Dil.
+%worlds () (false-i-lookup _ _ _ _ _).
+%total D (false-i-lookup D _ _ _ _).
+
+false-mem: false -> {G: g} {S: s} {T: t} {LBL: label} {R: t} mem G S T LBL R -> type.
+%mode false-mem +Dfalse +G +S +T +LBL +R -Dmem.
+%worlds () (false-mem _ _ _ _ _ _ _).
+%total D (false-mem D _ _ _ _ _ _).
+
+% -------- mem XOR not-mem --------
+
+mem-not-mem: {G: g} {S: s} {T: t} {LBL: label} 
+             mem G S T LBL Trec -> not-mem G S T LBL 
+             -> false -> type.
+%mode mem-not-mem +G +S +T +LBL +Dmem +Dnm -Dfalse.
+
+mem-not-mem-sel-lemma: % in:
+                       mem G S Up1 X R
+                       -> ub G S P L Up1
+                       -> not-mem G S Up2 X
+                       -> ub G S P L Up2
+                       -> tsame Up1 Up2 
+                       -> false -> type.
+%mode mem-not-mem-sel-lemma +Dmem +Dub1 +Dnotmem +Dub2 +Dtsame -Dfalse.
+-: mem-not-mem-sel-lemma
+      (Dmem: mem G S Up X R)
+      (Dub1: ub G S P L Up)
+      (Dnotmem: not-mem G S Up X)
+      (Dub2: ub G S P L Up)
+      (tsame/refl: tsame Up Up)
+      Dfalse
+<- mem-not-mem G S Up X Dmem Dnotmem Dfalse.
+      
+mem-not-mem/tt: mem-not-mem G S (t/t L Lo Up) (label/t L)
+   (mem/t: mem G S (t/t L Lo Up) (label/t L) (t/t L Lo Up))
+   (not-mem/tt (Dne: ne L L): not-mem G S (t/t L Lo Up) (label/t L))
+   Dfalse
+<- ne-same-false Dne Dfalse.
+mem-not-mem/vv: mem-not-mem _ _ _ _ mem/v (not-mem/vv Dne) Dfalse
+<- ne-same-false Dne Dfalse.
+mem-not-mem/mm: mem-not-mem _ _ _ _ mem/m (not-mem/mm Dne) Dfalse
+<- ne-same-false Dne Dfalse.
+mem-not-mem/sel: mem-not-mem G S (t/sel P L) X
+   (mem/sel (Dmem: mem G S Up1 X R) Dub1)
+   (not-mem/sel (Dnotmem: not-mem G S Up2 X) Dub2)
+   Dfalse
+<- ub-unique Dub1 Dub2 (Dtsame: tsame Up1 Up2)
+<- mem-not-mem-sel-lemma Dmem Dub1 Dnotmem Dub2 Dtsame Dfalse.
+mem-not-mem/and12: mem-not-mem G S (t/and TL TR) X
+   (mem/and12 (Drti: rt-intersect RL RR R) 
+              (Dmem1: mem G S TR X RR)
+              (Dmem2: mem G S TL X RL))
+   (not-mem/and (Dnotmem1: not-mem G S TR X) Dnotmem2)
+   Dfalse
+<- mem-not-mem G S TR X Dmem1 Dnotmem1 Dfalse.
+mem-not-mem/and1: mem-not-mem G S (t/and TL TR) X
+   (mem/and1 Dnotmem1 Dmem)
+   (not-mem/and Dnotmem2 Dnotmem3)
+   Dfalse
+<- mem-not-mem G S TL X Dmem Dnotmem3 Dfalse.
+mem-not-mem/and2: mem-not-mem G S (t/and TL TR) X
+   (mem/and2 Dmem Dnotmem1)
+   (not-mem/and Dnotmem2 Dnotmem3)
+   Dfalse
+<- mem-not-mem G S TR X Dmem Dnotmem2 Dfalse.
+mem-not-mem/or1: mem-not-mem G S (t/or TL TR) X
+   (mem/or Drtu Dmem1 Dmem2)
+   (not-mem/or1 Dnm)
+   Dfalse
+<- mem-not-mem G S TL X Dmem2 Dnm Dfalse.
+mem-not-mem/or2: mem-not-mem G S (t/or TL TR) X
+   (mem/or Drtu Dmem1 Dmem2)
+   (not-mem/or2 Dnm)
+   Dfalse
+<- mem-not-mem G S TR X Dmem1 Dnm Dfalse.
+mem-not-mem/bind: mem-not-mem G S (t/bind Z T) X
+   (mem/bind Dmem)
+   (not-mem/bind Dnm)
+   Dfalse
+<- mem-not-mem (gcons G Z T) S T X Dmem Dnm Dfalse.
+%worlds () (mem-not-mem _ _ _ _ _ _ _) (mem-not-mem-sel-lemma _ _ _ _ _ _) .
+%total (Dmem1 Dmem2)
+       (mem-not-mem _ _ _ _ Dmem1 _ _)
+       (mem-not-mem-sel-lemma Dmem2 _ _ _ _ _).
+
+% --------
+
+subty-mem: subty G S T1 T2 -> mem G S T2 LBL R2 
+           -> mem G S T1 LBL R1 -> subty G S R1 R2 -> type.
+%mode subty-mem +Dsub1 +Dmem1 -Dmem2 -Dsub2.
+
+subty-mem/top: subty-mem
+   (subty/top Dwf: subty G S T t/top)
+   (Dmem1: mem G S t/top LBL R)
+   Dmem2
+   Dsubty
+<- mem-not-mem G S t/top LBL Dmem1 not-mem/top Dfalse
+<- false-mem Dfalse G S T LBL R Dmem2
+<- false-subty Dfalse G S R R Dsubty.
+
+%worlds () (subty-mem _ _ _ _).
+%trustme %total Dsub (subty-mem Dsub _ _ _).
+
+% --------
+
+get-m0: % in:
+        isty gnil S (icons X I Is) TO
+        -> subty gnil S TO (t/m M TA2 TR2)
+        -> neorsame X M
+        % out:
+        -> i-lookup (icons X I Is) M (i/m Y TA1 TR1 E)
+        -> subty gnil S TA2 TA1
+        -> subty gnil S TR1 TR2 -> type.
+%mode get-m0 +Dex +Dsub1 +Dns -Dil -Dsub2 -Dsub3.
+
+% not possible because t/top is never a subtype of t/m:
+% get-m0/b: get-m0 extract-is-type/b 
+
+get-m0/hit: get-m0 
+   (isty/s (Disty: isty gnil S Is Trest)
+           (Dity: ity gnil S M (i/m X TA1 TR1 E) (t/m M TA1 TR1))
+           (Dnotin: not-in-is Is M)
+    : isty gnil S (icons M (i/m X TA1 TR1 E) Is) (t/and (t/m M TA1 TR1) Trest))
+   (subty/and1 (subty/m DsubR DsubA
+                   : subty gnil S (t/m M TA1 TR1) (t/m M TA2 TR2))
+      : subty gnil S (t/and (t/m M TA1 TR1) Trest) (t/m M TA2 TR2))
+   neorsame/same
+   (i-lookup/b: i-lookup (icons M (i/m X TA1 TR1 E) Is) M (i/m X TA1 TR1 E))
+   DsubA
+   DsubR.
+
+get-m0/miss: get-m0
+   (isty/s (isty/s Disty0 Dity0 Dnotin0
+               : isty gnil S (icons X0 I0 Is) (t/and Trest1 Trest2))
+           (Dity: ity gnil S X I T)
+           (Dnotin: not-in-is (icons X0 I0 Is) X)
+    : isty gnil S (icons X I (icons X0 I0 Is)) (t/and T (t/and Trest1 Trest2)))
+   (subty/and2 (Dsub: subty gnil S (t/and Trest1 Trest2) (t/m M TA2 TR2))
+      : subty gnil S (t/and T (t/and Trest1 Trest2)) (t/m M TA2 TR2))
+   (neorsame/ne (Dne: ne X M))
+   (i-lookup/s Dne Dil)
+   DsubA
+   DsubR
+<- mk-neorsame X0 M Dnes
+<- get-m0 (isty/s Disty0 Dity0 Dnotin0)
+          Dsub
+          Dnes
+          Dil
+          DsubA
+          DsubR.
+
+%{
+get-m0/t-contradiction: get-m0 
+   (isty/s (isty/nil: isty gnil S inil t/top)
+           (ity/t Dsub1 Dwf1 Dwf2: ity gnil S X (i/t Lo Up) (t/t X Lo Up))
+           not-in-is/nil
+    : isty gnil S (icons X (i/t Lo Up) inil) (t/and (t/t X Lo Up) t/top))
+   (Dsub: subty gnil S (t/and (t/t X Lo Up) t/top) (t/m M TA2 TR2)) % <-- contradiction
+   Dnes
+   Dil
+   DsubA
+   DsubR
+<- mem-not-mem gnil S T??? X??? Dmem Dnotmem Dfalse
+<- false-i-lookup Dfalse
+                  (icons X (i/t Lo Up) inil) M 
+                  (i/m 7 t/top t/bot (e/p (p/v (v/o 7)))) % <- just any i/m
+                  Dil
+<- false-subty Dfalse gnil S TA2 t/top DsubA
+<- false-subty Dfalse gnil S t/bot TR2 DsubR.
+}%
+
+%worlds () (get-m0 _ _ _ _ _ _).
+%trustme %total Disty (get-m0 Disty _ _ _ _ _).
+
+%{ TODO adapt to label usage
+get-m: % in:
+       s-lookup S O Is
+       -> extract-is-type Is TO1 
+       -> subty gnil S TO1 TO2
+       -> mem gnil S TO2 M (t/m M TA1 TR1)
+       % out:
+       -> i-lookup Is M (i/m X TA2 TR2 E)
+       -> subty gnil S TA1 TA2
+       -> subty gnil S TR2 TR1 -> type.
+%mode get-m +Dsl +Dex +Dsub1 +Dmem -Dil -Dsub2 -Dsub3.
+
+get-m/m: 
+   get-m 
+      (Dsl: s-lookup S O Is)
+      (Dex: extract-is-type Is TO1)
+      (Dsub: subty gnil S TO1 (t/m M TA TR))
+      (mem/m: mem gnil S (t/m M TA TR) M (t/m M TA TR))
+      
+%worlds () (get-m _ _ _ _ _ _ _).
+%total Dmem (get-m _ _ _ Dmem _ _ _).
+
+
+% -------- progress --------
+
+% (multistep E1 E2 S2) means that by taking some steps, we can go from
+% (E1 snil) to (E2 S2).
+multistep: e -> e -> s -> type.
+multistep/z: multistep E E snil.
+multistep/s: multistep E0 E2 S2
+             <- multistep E0 E1 S1
+             <- step E1 S1 E2 S2.
+
+% step or result
+step-or-res: s -> e -> type.
+step-or-res/step: step-or-res S1 E1
+   <- step E1 S1 E2 S2.
+step-or-res/res: step-or-res S (e/p (p/v (v/o O)))
+   <- s-lookup S O Is.
+
+
+progress:   ty gnil S1 E1 T
+            -> step-or-res S1 E1 -> type.
+%mode       progress +Dty -Dsor.
+
+progress/app:
+   progress (ty/app (Dsub: subty gnil S TA1 TA2)
+                    (Dmem: mem gnil S TO M (t/m M TA2 TR))
+                    (ty/p/o (DistyA)
+                            (Ds-lA: s-lookup S VA IsA)
+                        : ty gnil S (e/p (p/v (v/o VA))) TA1)
+                    (ty/p/o (DistyO)
+                            (Ds-lO: s-lookup S VO IsO)
+                        : ty gnil S (e/p (p/v (v/o VO))) TO)
+               : ty gnil S (e/app (v/o VO) M (v/o VA)) TR)
+            (step-or-res/step (step/app 
+               De-subst
+               Di-l
+               Ds-lO : step (e/app (v/o VO) M (v/o VA)) S Efooo S)).
+
+
+preservation:  ty gnil S1 E1 T1 -> step E1 S1 E2 S2
+               -> ty gnil S2 E2 T2 -> subty gnil S2 T2 T1 -> type.
+%mode          preservation +Dty1 +Dstep -Dty2 -Dsub.
+
+% Maybe hypotheses are not strong enough: E1 might be
+% (e/app (v/var X1) M (v/var X2)), but is that a problem?
+
+}%
